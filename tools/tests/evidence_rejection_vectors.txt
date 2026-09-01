@@ -1,0 +1,17 @@
+# XMZADD 20260901 C# 与 Python 公开证据拒绝向量，内容列使用 UTF-8 Base64 避免控制字符破坏文本文件。
+server_equals|U2VydmVyPWV4YW1wbGU=
+database_equals|RGF0YWJhc2U9c2FtcGxl
+connection_string|Q29ubmVjdGlvblN0cmluZz1TZXJ2ZXI9ZXhhbXBsZTtEYXRhYmFzZT1zYW1wbGU=
+access_token_camel|QWNjZXNzVG9rZW49ZmFrZQ==
+access_token_snake|YWNjZXNzX3Rva2VuPWZha2U=
+api_key_camel|QXBpS2V5PXByaXZhdGU=
+api_key_snake_spaces|YXBpX2tleSA9IHByaXZhdGU=
+x_api_key_hyphen|WC1BcGktS2V5OiBwcml2YXRl
+password_spaces|cGFzc3dvcmQgPSBwcml2YXRl
+client_secret_spaces|Y2xpZW50X3NlY3JldCA9IHByaXZhdGU=
+access_token_hyphen_spaces|QWNjZXNzLVRva2VuID0gcHJpdmF0ZQ==
+data_source|RGF0YSBTb3VyY2U9ZXhhbXBsZQ==
+initial_catalog|SW5pdGlhbCBDYXRhbG9nPXNhbXBsZQ==
+bidi_override|YWJj4oCudHh0
+zero_width_space|YWJj4oCLdHh0
+nul_character|YWJjAHR4dA==
