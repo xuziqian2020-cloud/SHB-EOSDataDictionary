@@ -1,0 +1,266 @@
+name: Process dictionary event issues
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: dictionary-event-queue
+  cancel-in-progress: false
+
+jobs:
+  process-open-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Use fixed Python runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.8"
+
+      - name: Configure commit identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Recover interrupted dictionary issue closures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CLOSING_LABEL: eos-dictionary-closing
+        run: |
+          set -eu
+          gh label create "$CLOSING_LABEL" --repo "$REPOSITORY" \
+            --color 1D76DB --description "Dictionary issue closure is awaiting verification" --force
+          recovery_pages_file="$RUNNER_TEMP/closing-issue-pages.json"
+          recovery_numbers_file="$RUNNER_TEMP/closing-issue-numbers.txt"
+          gh api --method GET --paginate --slurp \
+            "repos/$REPOSITORY/issues?state=closed&labels=$CLOSING_LABEL&per_page=100" \
+            > "$recovery_pages_file"
+          python - "$recovery_pages_file" <<'PY' > "$recovery_numbers_file"
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as source:
+              pages = json.load(source)
+          for page in pages:
+              for issue in page:
+                  if "pull_request" in issue:
+                      continue
+                  number = str(issue.get("number", ""))
+                  if not number.isascii() or not number.isdigit() or number == "0":
+                      raise ValueError("Recovery issue number is invalid.")
+                  print(number)
+          PY
+          while IFS= read -r number; do
+            [ -n "$number" ] || continue
+            reopened=false
+            for attempt in 1 2 3; do
+              if gh issue reopen "$number" --repo "$REPOSITORY"; then
+                reopened=true
+                break
+              fi
+            done
+            if [ "$reopened" != "true" ]; then
+              echo "Issue #$number could not be recovered after three attempts." >&2
+              exit 1
+            fi
+            gh issue edit "$number" --repo "$REPOSITORY" --remove-label "$CLOSING_LABEL"
+          done < "$recovery_numbers_file"
+
+      - name: Process and publish the complete open queue
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -eu
+          published=false
+          for attempt in 1 2 3; do
+            pages_file="$RUNNER_TEMP/issue-pages.json"
+            issues_file="$RUNNER_TEMP/open-dictionary-issues.json"
+            result_file="$RUNNER_TEMP/process-result.json"
+
+            gh api --method GET --paginate --slurp \
+              "repos/$REPOSITORY/issues?state=open&per_page=100" > "$pages_file"
+            python - "$pages_file" "$issues_file" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as source:
+              pages = json.load(source)
+          issues = []
+          for page in pages:
+              for issue in page:
+                  if "pull_request" not in issue and issue.get("title", "").startswith("[EOS-DICTIONARY-EVENT]"):
+                      issues.append(issue)
+          with open(sys.argv[2], "w", encoding="utf-8") as target:
+              json.dump(issues, target, ensure_ascii=False, separators=(",", ":"))
+          PY
+
+            python tools/process_open_issues.py \
+              --repo-dir . \
+              --issues-file "$issues_file" \
+              --result-file "$result_file"
+
+            if [ -z "$(git status --porcelain -- events snapshot)" ]; then
+              published=true
+              break
+            fi
+
+            git add -- events snapshot
+            git commit -m "chore: process dictionary event issues"
+            if git push origin HEAD:main; then
+              published=true
+              break
+            fi
+
+            git fetch origin main
+            git checkout -B dictionary-event-worker origin/main
+          done
+
+          if [ "$published" != "true" ]; then
+            echo "Dictionary event queue could not be published after retries." >&2
+            exit 1
+          fi
+
+          echo "result_file=$RUNNER_TEMP/process-result.json" >> "$GITHUB_OUTPUT"
+
+      - name: Comment and close successfully published issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RESULT_FILE: ${{ steps.publish.outputs.result_file }}
+          CLOSING_LABEL: eos-dictionary-closing
+        run: |
+          set -eu
+          # XMZADD 20260901 对关闭后的补偿重开采用有限重试，避免暂时性 API 失败吞掉待处理 Issue。
+          reopen_issue_with_retry() {
+            issue_number="$1"
+            for attempt in 1 2 3; do
+              if gh issue reopen "$issue_number" --repo "$REPOSITORY"; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          python - "$RESULT_FILE" <<'PY' > "$RUNNER_TEMP/close-candidates.txt"
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as source:
+              result = json.load(source)
+          for number in result["processedIssueVersions"]:
+              if not number.isascii() or not number.isdigit() or number == "0":
+                  raise ValueError("Processed issue number is invalid.")
+              print(number)
+          PY
+          while IFS= read -r number; do
+            [ -n "$number" ] || continue
+            pre_close_issue_file="$RUNNER_TEMP/pre-close-issue-$number.json"
+            if ! gh api --method GET "repos/$REPOSITORY/issues/$number" > "$pre_close_issue_file"; then
+              echo "Issue #$number could not be re-read and will remain open." >&2
+              continue
+            fi
+            if ! python - "$RESULT_FILE" "$pre_close_issue_file" "$number" <<'PY'
+          import hashlib
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as source:
+              result = json.load(source)
+          with open(sys.argv[2], "r", encoding="utf-8") as source:
+              current_issue = json.load(source)
+          expected = result["processedIssueVersions"].get(sys.argv[3])
+          body = current_issue.get("body")
+          if expected is None or current_issue.get("state") != "open":
+              raise SystemExit(1)
+          if current_issue.get("updated_at") != expected["updatedAt"]:
+              raise SystemExit(1)
+          if not isinstance(body, str):
+              raise SystemExit(1)
+          if hashlib.sha256(body.encode("utf-8")).hexdigest() != expected["bodySha256"]:
+              raise SystemExit(1)
+          PY
+            then
+              echo "Issue #$number changed after processing and will remain open." >&2
+              continue
+            fi
+            gh issue edit "$number" --repo "$REPOSITORY" --add-label "$CLOSING_LABEL"
+            gh issue close "$number" --repo "$REPOSITORY"
+            post_close_issue_file="$RUNNER_TEMP/post-close-issue-$number.json"
+            if ! gh api --method GET "repos/$REPOSITORY/issues/$number" > "$post_close_issue_file"; then
+              if ! reopen_issue_with_retry "$number"; then
+                echo "Issue #$number could not be reopened after the post-close read failed." >&2
+                exit 1
+              fi
+              gh issue edit "$number" --repo "$REPOSITORY" --remove-label "$CLOSING_LABEL"
+              continue
+            fi
+            if ! python - "$RESULT_FILE" "$post_close_issue_file" "$number" <<'PY'
+          import hashlib
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as source:
+              result = json.load(source)
+          with open(sys.argv[2], "r", encoding="utf-8") as source:
+              current_issue = json.load(source)
+          expected = result["processedIssueVersions"].get(sys.argv[3])
+          body = current_issue.get("body")
+          if expected is None or current_issue.get("state") != "closed":
+              raise SystemExit(1)
+          if not isinstance(body, str):
+              raise SystemExit(1)
+          if hashlib.sha256(body.encode("utf-8")).hexdigest() != expected["bodySha256"]:
+              raise SystemExit(1)
+          PY
+            then
+              if ! reopen_issue_with_retry "$number"; then
+                echo "Issue #$number could not be reopened after its post-close version changed." >&2
+                exit 1
+              fi
+              gh issue edit "$number" --repo "$REPOSITORY" --remove-label "$CLOSING_LABEL"
+              continue
+            fi
+            gh issue edit "$number" --repo "$REPOSITORY" --remove-label "$CLOSING_LABEL"
+            gh issue comment "$number" --repo "$REPOSITORY" \
+              --body "字典事件已验证、发布并写入规范快照。"
+          done < "$RUNNER_TEMP/close-candidates.txt"
+
+      - name: Label validation failures without closing them
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RESULT_FILE: ${{ steps.publish.outputs.result_file }}
+        run: |
+          gh label create dictionary-event-invalid --repo "$REPOSITORY" \
+            --color B60205 --description "Dictionary event validation failed" --force
+          python - "$RESULT_FILE" <<'PY' > "$RUNNER_TEMP/failed-issues.txt"
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as source:
+              result = json.load(source)
+          for number in result["failedIssues"]:
+              print(number)
+          PY
+          while IFS= read -r number; do
+            [ -n "$number" ] || continue
+            gh issue edit "$number" --repo "$REPOSITORY" --add-label dictionary-event-invalid
+            gh issue comment "$number" --repo "$REPOSITORY" \
+              --body "字典事件校验失败；请按公开协议修正正文后重新提交。"
+          done < "$RUNNER_TEMP/failed-issues.txt"
