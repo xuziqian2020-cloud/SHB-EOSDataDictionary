@@ -373,6 +373,23 @@ class ProcessOpenIssuesTests(unittest.TestCase):
         self.assertLess(post_get, remove_label)
         self.assertLess(remove_label, success_comment)
 
+    def test_invalid_issue_comment_is_only_added_when_label_is_absent(self):
+        """XMZADD 20260909 验证定时工作流不会对未变化的无效 Issue 每五分钟重复追加评论。"""
+        workflow_path = MODULE_PATH.parents[1] / ".github" / "workflows" / "process-dictionary-event.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+        failure_step = workflow.split("- name: Label validation failures without closing them", 1)[1]
+
+        self.assertIn('gh issue view "$number" --repo "$REPOSITORY" --json labels', failure_step)
+        self.assertIn('grep -Fqx "dictionary-event-invalid"', failure_step)
+        self.assertLess(
+            failure_step.index('gh issue view "$number"'),
+            failure_step.index('gh issue comment "$number"'),
+        )
+        self.assertLess(
+            failure_step.index('grep -Fqx "dictionary-event-invalid"'),
+            failure_step.index('gh issue comment "$number"'),
+        )
+
     def test_non_publisher_physical_property_is_rejected_without_snapshot_change(self):
         """XMZADD 20260901 验证普通公开用户不能修改数据库物理结构且失败不产生副作用。"""
         before = (self.repo_dir / "snapshot" / "latest.json.gz").read_bytes()
