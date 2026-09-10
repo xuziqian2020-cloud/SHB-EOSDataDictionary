@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>SHB.EosDataDictionary</RootNamespace>
+    <AssemblyName>SHB.EosDataDictionary</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <ApplicationIcon>Assets\EosDataDictionary.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Configuration" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Data.DataSetExtensions" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Runtime.Serialization.Json" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+    <Reference Include="System.Xml.Linq" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Data\schema.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Data\GitHubRepository.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\EosDataDictionary.ico" />
+    <Resource Include="Assets\EosDataDictionary.png" />
+  </ItemGroup>
+
+  <Target Name="CopySQLiteNativeBinariesToPublishDirectory" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)x86;$(PublishDir)x64" />
+    <Copy SourceFiles="$(TargetDir)x86\SQLite.Interop.dll"
+          DestinationFolder="$(PublishDir)x86"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(TargetDir)x86\SQLite.Interop.dll')" />
+    <Copy SourceFiles="$(TargetDir)x64\SQLite.Interop.dll"
+          DestinationFolder="$(PublishDir)x64"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(TargetDir)x64\SQLite.Interop.dll')" />
+  </Target>
+</Project>

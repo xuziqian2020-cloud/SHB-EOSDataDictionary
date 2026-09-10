@@ -1,3 +1,17 @@
 __pycache__/
 *.py[cod]
 .worktrees/
+bin/
+obj/
+TestResults/
+artifacts/
+logs/
+*.db
+*.db-shm
+*.db-wal
+*.exe
+*.dll
+*.pdb
+*.user
+*.suo
+.vs/

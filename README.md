@@ -2,6 +2,22 @@
 
 本仓库使用 GitHub Issue 收集公开数据字典修订，并由受控工作流生成不可变事件、逐修订索引和规范快照。
 
+## 应用源码
+
+仓库同时包含数据字典桌面应用源码 `src/`、测试 `tests/`，以及字典增强与快照晋升两个命令行工具：`tools/SHB.EosDataDictionary.Enricher/` 和 `tools/SHB.EosDataDictionary.Promoter/`。`tools/IconGenerator/` 是应用图标生成辅助工具。
+
+EOS 业务系统源码不在本仓库中，也不得复制到本仓库。
+
+在 Windows 和 .NET Framework 4.8 开发环境中执行：
+
+```powershell
+dotnet restore tests/SHB.EosDataDictionary.Tests/SHB.EosDataDictionary.Tests.csproj
+dotnet test tests/SHB.EosDataDictionary.Tests/SHB.EosDataDictionary.Tests.csproj -c Release --no-restore
+dotnet build src/SHB.EosDataDictionary/SHB.EosDataDictionary.csproj -c Release --no-restore
+dotnet build tools/SHB.EosDataDictionary.Enricher/SHB.EosDataDictionary.Enricher.csproj -c Release
+dotnet build tools/SHB.EosDataDictionary.Promoter/SHB.EosDataDictionary.Promoter.csproj -c Release
+```
+
 ## 权限边界
 
 - 普通公开用户只能维护表和字段的业务元数据，例如中文名、业务含义、模块、用途和备注。

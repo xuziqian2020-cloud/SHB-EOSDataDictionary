@@ -98,7 +98,7 @@ New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'tools\tests\evidence_rejection_vectors.txt') -Destination $fixtureDirectory -Force
 ```
 
-把测试项目中的共享向量路径改为仓库现有文件：
+把测试项目中的共享向量路径改为仓库现有文件。应用项目内不存在独立 `Data/schema.sql`，SQLite 结构由 `LocalDictionaryStore.EnsureSchema()` 创建；保留 `.csproj` 的兼容性 `Update` 项，不得猜造结构文件：
 
 ```xml
 <None Include="TestData\evidence_rejection_vectors.txt" Link="evidence_rejection_vectors.txt">
@@ -115,7 +115,7 @@ rg -n --hidden --glob '!snapshot/**' --glob '!events/**' --glob '!.git/**' '(git
 git -C $repo ls-files --others --exclude-standard | rg '(\.db($|-)|\.exe$|\.dll$|\.pdb$|appsettings.*\.json$|\.config$)'
 ```
 
-Expected: 两次扫描均无命中；如果有命中，先从导入集移除并重新扫描。
+Expected: 两次扫描均无命中；如果有命中，先从导入集移除并重新扫描。确认现有 `src/SHB.EosDataDictionary/Data/GitHubRepository.json` 已跟踪且不含凭据；不得因为 `.csproj` 的历史兼容项而生成不存在的 `schema.sql`。
 
 - [ ] **Step 5: 构建基线并提交**
 

@@ -1,0 +1,32 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="App.WindowBackgroundBrush" Color="#EAF0F6" />
+    <SolidColorBrush x:Key="App.ShellBackgroundBrush" Color="#F7F9FC" />
+    <SolidColorBrush x:Key="App.PanelBackgroundBrush" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="App.PanelSecondaryBrush" Color="#F2F6FA" />
+    <SolidColorBrush x:Key="App.PanelTertiaryBrush" Color="#E8F0F8" />
+    <SolidColorBrush x:Key="App.InputBackgroundBrush" Color="#F7FAFC" />
+    <SolidColorBrush x:Key="App.BorderBrush" Color="#CCD8E5" />
+    <SolidColorBrush x:Key="App.BorderStrongBrush" Color="#B8C8D9" />
+    <SolidColorBrush x:Key="App.TextPrimaryBrush" Color="#102337" />
+    <SolidColorBrush x:Key="App.TextSecondaryBrush" Color="#30465D" />
+    <SolidColorBrush x:Key="App.TextMutedBrush" Color="#60748A" />
+    <SolidColorBrush x:Key="App.AccentBrush" Color="#087FC2" />
+    <SolidColorBrush x:Key="App.AccentHoverBrush" Color="#066BA4" />
+    <SolidColorBrush x:Key="App.AccentSoftBrush" Color="#DFF1FC" />
+    <SolidColorBrush x:Key="App.RowBackgroundBrush" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="App.RowAlternateBrush" Color="#F6F9FC" />
+    <SolidColorBrush x:Key="App.SelectionBrush" Color="#D7ECFA" />
+    <SolidColorBrush x:Key="App.ControlHoverBrush" Color="#E4EEF7" />
+    <SolidColorBrush x:Key="App.DisabledBrush" Color="#A7B5C3" />
+    <SolidColorBrush x:Key="App.ScrollTrackBrush" Color="#EEF3F8" />
+    <SolidColorBrush x:Key="App.ScrollThumbBrush" Color="#AFC0D1" />
+    <SolidColorBrush x:Key="App.WarningBackgroundBrush" Color="#FFF8E8" />
+    <SolidColorBrush x:Key="App.WarningBorderBrush" Color="#E5C572" />
+    <SolidColorBrush x:Key="App.WarningTextBrush" Color="#B66B00" />
+    <SolidColorBrush x:Key="App.StatusConfirmedBrush" Color="#16835D" />
+    <SolidColorBrush x:Key="App.StatusCodeBrush" Color="#098F84" />
+    <SolidColorBrush x:Key="App.StatusGuessBrush" Color="#B66B00" />
+    <SolidColorBrush x:Key="App.LogoBackgroundBrush" Color="#DFF2FF" />
+    <DropShadowEffect x:Key="App.PanelShadowEffect" Color="#2B455D" BlurRadius="38" ShadowDepth="14" Direction="270" Opacity="0.12" />
+</ResourceDictionary>
