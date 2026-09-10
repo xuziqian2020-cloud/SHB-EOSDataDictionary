@@ -13,7 +13,7 @@
 ## 工作目录与不可突破的边界
 
 - 所有 Git 命令均从数据字典仓库根目录执行，使用 `git rev-parse --show-toplevel` 获取 `$repo`。
-- 当前应用源码根目录由 `$source = Split-Path (Split-Path $repo -Parent) -Parent` 得到。
+- 当前应用源码根目录通过仅存在于当前进程的 `$env:EOS_DICTIONARY_APP_ROOT` 提供；该环境变量不得写入仓库。
 - EOS 只读源码根目录通过仅存在于当前进程的 `$env:EOS_SOURCE_ROOT` 提供，知识库为其 `docs_knowledge` 子目录；该环境变量不得写入仓库。
 - 本机活动字典由 `Join-Path $env:LOCALAPPDATA 'SHB\EosDataDictionary\dictionary.db'` 得到。
 - 新增或重写的类、方法和函数必须有 `/// <summary>XMZADD 20260910 中文意图</summary>`；关键业务注释只说明 Why。
@@ -81,7 +81,7 @@ logs/
 
 ```powershell
 $repo = (git rev-parse --show-toplevel).Trim()
-$source = Split-Path (Split-Path $repo -Parent) -Parent
+$source = (Resolve-Path $env:EOS_DICTIONARY_APP_ROOT).Path
 Copy-Item -LiteralPath (Join-Path $source 'global.json') -Destination $repo -Force
 & robocopy (Join-Path $source 'src') (Join-Path $repo 'src') /E /XD bin obj .vs TestResults /XF *.user *.suo *.db *.exe *.dll *.pdb
 if ($LASTEXITCODE -ge 8) { throw '复制 src 失败。' }
@@ -918,7 +918,7 @@ Start-Process -FilePath (Join-Path $manual 'SHB.EosDataDictionary.exe') -Working
 
 ```powershell
 $repo = (git rev-parse --show-toplevel).Trim()
-$source = Split-Path (Split-Path $repo -Parent) -Parent
+$source = (Resolve-Path $env:EOS_DICTIONARY_APP_ROOT).Path
 Copy-Item -LiteralPath (Join-Path $repo 'global.json') -Destination $source -Force
 & robocopy (Join-Path $repo 'src') (Join-Path $source 'src') /E /XD bin obj /XF *.user *.suo *.db *.exe *.dll *.pdb
 if ($LASTEXITCODE -ge 8) { throw '同步 src 失败。' }
