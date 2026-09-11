@@ -16,8 +16,12 @@ namespace SHB.EosDataDictionary.Models
     /// <summary>XMZADD 20260828 保存一个 EOS 表或视图的结构和业务解释。</summary>
     public sealed class TableMetadata
     {
+        /// <summary>XMZADD 20260911 初始化可持续维护的表级参考名称、模块和结构集合。</summary>
         public TableMetadata()
         {
+            AlternativeChineseNames = new List<MetadataValue>();
+            RejectedSuggestionFingerprints = new List<string>();
+            UsedByModules = new List<MetadataValue>();
             Fields = new List<FieldMetadata>();
             Relations = new List<RelationMetadata>();
         }
@@ -27,6 +31,14 @@ namespace SHB.EosDataDictionary.Models
         public string ObjectName { get; set; }
         public string ObjectType { get; set; }
         public MetadataValue ChineseName { get; set; }
+        /// <summary>XMZADD 20260910 保存尚未确认为正式名称的首选参考译名。</summary>
+        public MetadataValue SuggestedChineseName { get; set; }
+        /// <summary>XMZADD 20260910 保存可供人工审阅的其他参考译名。</summary>
+        public IList<MetadataValue> AlternativeChineseNames { get; set; }
+        /// <summary>XMZADD 20260910 保存已拒绝建议的稳定指纹以避免重复推荐。</summary>
+        public IList<string> RejectedSuggestionFingerprints { get; set; }
+        /// <summary>XMZADD 20260910 保存使用当前对象的业务模块证据。</summary>
+        public IList<MetadataValue> UsedByModules { get; set; }
         public MetadataValue ModuleName { get; set; }
         public MetadataValue EntityName { get; set; }
         public MetadataValue BusinessMeaning { get; set; }
@@ -41,13 +53,22 @@ namespace SHB.EosDataDictionary.Models
     /// <summary>XMZADD 20260828 保存一个 EOS 表字段的结构、枚举和关系说明。</summary>
     public sealed class FieldMetadata
     {
+        /// <summary>XMZADD 20260911 初始化可持续维护的字段参考名称和枚举集合。</summary>
         public FieldMetadata()
         {
+            AlternativeChineseNames = new List<MetadataValue>();
+            RejectedSuggestionFingerprints = new List<string>();
             EnumItems = new List<EnumItemMetadata>();
         }
 
         public string FieldName { get; set; }
         public MetadataValue ChineseName { get; set; }
+        /// <summary>XMZADD 20260910 保存尚未确认为正式名称的首选参考译名。</summary>
+        public MetadataValue SuggestedChineseName { get; set; }
+        /// <summary>XMZADD 20260910 保存可供人工审阅的其他参考译名。</summary>
+        public IList<MetadataValue> AlternativeChineseNames { get; set; }
+        /// <summary>XMZADD 20260910 保存已拒绝建议的稳定指纹以避免重复推荐。</summary>
+        public IList<string> RejectedSuggestionFingerprints { get; set; }
         public string OwnerTableName { get; set; }
         public MetadataValue EntityPropertyName { get; set; }
         public MetadataValue BusinessMeaning { get; set; }

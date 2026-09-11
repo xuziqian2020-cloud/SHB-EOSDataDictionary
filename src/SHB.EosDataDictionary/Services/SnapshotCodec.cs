@@ -134,6 +134,7 @@ namespace SHB.EosDataDictionary.Services
 
                     // 读取到压缩流末尾才能同时核验剩余内容、GZip 尾部和完整解压总量。
                     DrainRemainingContent(jsonStream);
+                    NormalizeNameLayerCollections(snapshot);
                     return snapshot;
                 }
             }
@@ -211,6 +212,10 @@ namespace SHB.EosDataDictionary.Services
                 ObjectName = table.ObjectName,
                 ObjectType = table.ObjectType,
                 ChineseName = table.ChineseName,
+                SuggestedChineseName = table.SuggestedChineseName,
+                AlternativeChineseNames = CopyMetadataValues(table.AlternativeChineseNames),
+                RejectedSuggestionFingerprints = CopyStrings(table.RejectedSuggestionFingerprints),
+                UsedByModules = CopyMetadataValues(table.UsedByModules),
                 ModuleName = table.ModuleName,
                 EntityName = table.EntityName,
                 BusinessMeaning = table.BusinessMeaning,
@@ -252,6 +257,9 @@ namespace SHB.EosDataDictionary.Services
             {
                 FieldName = field.FieldName,
                 ChineseName = field.ChineseName,
+                SuggestedChineseName = field.SuggestedChineseName,
+                AlternativeChineseNames = CopyMetadataValues(field.AlternativeChineseNames),
+                RejectedSuggestionFingerprints = CopyStrings(field.RejectedSuggestionFingerprints),
                 OwnerTableName = field.OwnerTableName,
                 EntityPropertyName = field.EntityPropertyName,
                 BusinessMeaning = field.BusinessMeaning,
@@ -288,6 +296,87 @@ namespace SHB.EosDataDictionary.Services
             enumItems.Sort(CompareEnumItems);
             orderedField.EnumItems = enumItems;
             return orderedField;
+        }
+
+        /// <summary>XMZADD 20260910 复制参考名称集合以隔离编码排序副本与界面正在维护的集合。</summary>
+        private static IList<MetadataValue> CopyMetadataValues(IList<MetadataValue> source)
+        {
+            var result = new List<MetadataValue>();
+            if (source == null)
+            {
+                return result;
+            }
+            for (int index = 0; index < source.Count; index++)
+            {
+                result.Add(source[index]);
+            }
+            result.Sort(CompareMetadataValues);
+            return result;
+        }
+
+        /// <summary>XMZADD 20260910 复制建议指纹集合以避免编码过程改动调用方顺序。</summary>
+        private static IList<string> CopyStrings(IList<string> source)
+        {
+            var result = new List<string>();
+            if (source == null)
+            {
+                return result;
+            }
+            for (int index = 0; index < source.Count; index++)
+            {
+                result.Add(source[index]);
+            }
+            result.Sort(StringComparer.Ordinal);
+            return result;
+        }
+
+        /// <summary>XMZADD 20260910 将旧快照缺失或显式为空的参考名称集合恢复为可直接维护的空列表。</summary>
+        private static void NormalizeNameLayerCollections(SnapshotData snapshot)
+        {
+            if (snapshot.Tables == null)
+            {
+                return;
+            }
+            for (int tableIndex = 0; tableIndex < snapshot.Tables.Count; tableIndex++)
+            {
+                TableMetadata table = snapshot.Tables[tableIndex];
+                if (table == null)
+                {
+                    continue;
+                }
+                table.AlternativeChineseNames = CopyMutableList(table.AlternativeChineseNames);
+                table.RejectedSuggestionFingerprints = CopyMutableList(table.RejectedSuggestionFingerprints);
+                table.UsedByModules = CopyMutableList(table.UsedByModules);
+                if (table.Fields == null)
+                {
+                    continue;
+                }
+                for (int fieldIndex = 0; fieldIndex < table.Fields.Count; fieldIndex++)
+                {
+                    FieldMetadata field = table.Fields[fieldIndex];
+                    if (field == null)
+                    {
+                        continue;
+                    }
+                    field.AlternativeChineseNames = CopyMutableList(field.AlternativeChineseNames);
+                    field.RejectedSuggestionFingerprints = CopyMutableList(field.RejectedSuggestionFingerprints);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 将快照集合恢复为非空可变列表，保证解码后仍可继续维护参考译名。</summary>
+        private static IList<T> CopyMutableList<T>(IList<T> source)
+        {
+            var result = new List<T>();
+            if (source == null)
+            {
+                return result;
+            }
+            for (int index = 0; index < source.Count; index++)
+            {
+                result.Add(source[index]);
+            }
+            return result;
         }
 
         /// <summary>XMZADD 20260901 复制并按对象键和排除原因稳定排列排除记录。</summary>

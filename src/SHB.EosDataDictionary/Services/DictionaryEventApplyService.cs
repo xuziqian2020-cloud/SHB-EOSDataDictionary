@@ -1553,6 +1553,9 @@ namespace SHB.EosDataDictionary.Services
                 {
                     continue;
                 }
+                table.AlternativeChineseNames = CopyInitializedList(table.AlternativeChineseNames);
+                table.RejectedSuggestionFingerprints = CopyInitializedList(table.RejectedSuggestionFingerprints);
+                table.UsedByModules = CopyInitializedList(table.UsedByModules);
                 table.Fields = CopyList(table.Fields);
                 table.Relations = CopyList(table.Relations);
                 if (table.Fields == null)
@@ -1564,6 +1567,8 @@ namespace SHB.EosDataDictionary.Services
                     FieldMetadata field = table.Fields[fieldIndex];
                     if (field != null)
                     {
+                        field.AlternativeChineseNames = CopyInitializedList(field.AlternativeChineseNames);
+                        field.RejectedSuggestionFingerprints = CopyInitializedList(field.RejectedSuggestionFingerprints);
                         field.EnumItems = CopyList(field.EnumItems);
                     }
                 }
@@ -1589,6 +1594,21 @@ namespace SHB.EosDataDictionary.Services
             if (source == null)
             {
                 return null;
+            }
+            for (int index = 0; index < source.Count; index++)
+            {
+                result.Add(source[index]);
+            }
+            return result;
+        }
+
+        /// <summary>XMZADD 20260910 将新增审阅集合恢复为非空可变列表，保证事件应用后仍可继续维护参考层。</summary>
+        private static IList<T> CopyInitializedList<T>(IList<T> source)
+        {
+            var result = new List<T>();
+            if (source == null)
+            {
+                return result;
             }
             for (int index = 0; index < source.Count; index++)
             {

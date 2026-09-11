@@ -580,6 +580,129 @@ namespace SHB.EosDataDictionary.Tests
             }
         }
 
+        /// <summary>XMZADD 20260910 验证参考名称与使用模块的证据也会按公开快照规则移除本机路径和私密源码。</summary>
+        [TestMethod]
+        public async Task EmptyRemote_NewNameLayerEvidence_IsSanitizedInFullSnapshot()
+        {
+            var client = new StubGitHubDictionaryClient("100", new[] { "100" });
+            client.Manifest = new SnapshotManifest
+            {
+                FormatVersion = 1,
+                Revision = 0L,
+                SnapshotPath = "snapshot/latest.json.gz",
+                GeneratedAtUtc = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+            };
+            string sourceRoot = CreateSourceRoot();
+            try
+            {
+                SnapshotData current = CreateFullSnapshot(1);
+                TableMetadata table = current.Tables[0];
+                FieldMetadata field = table.Fields[0];
+                table.SuggestedChineseName = CreatePrivateNameValue("订单参考名");
+                table.AlternativeChineseNames.Add(CreatePrivateNameValue("订单单据"));
+                table.UsedByModules.Add(CreatePrivateNameValue("销售模块"));
+                field.SuggestedChineseName = CreatePrivateNameValue("订单内码参考名");
+                field.AlternativeChineseNames.Add(CreatePrivateNameValue("订单主键"));
+                StructurePublishService service = CreateService(client, new SnapshotData(), current);
+
+                StructurePublishResult preview = await service.PreviewAsync(
+                    CreateRequest(sourceRoot, null), CancellationToken.None);
+
+                Assert.AreEqual(StructurePublishOutcome.ReadyToPublish, preview.Outcome);
+                SnapshotData decoded = new SnapshotCodec().DecodeAndValidate(
+                    preview.FullSnapshotContent,
+                    preview.FullSnapshotManifest.SnapshotSha256);
+                TableMetadata decodedTable = decoded.Tables[0];
+                FieldMetadata decodedField = decodedTable.Fields[0];
+                MetadataValue[] publishedValues =
+                {
+                    decodedTable.SuggestedChineseName,
+                    decodedTable.AlternativeChineseNames[0],
+                    decodedTable.UsedByModules[0],
+                    decodedField.SuggestedChineseName,
+                    decodedField.AlternativeChineseNames[0]
+                };
+                for (int index = 0; index < publishedValues.Length; index++)
+                {
+                    Assert.IsNotNull(publishedValues[index]);
+                    Assert.AreEqual(string.Empty, publishedValues[index].Evidence[0].SourcePath);
+                    Assert.IsNull(publishedValues[index].Evidence[0].RawValue);
+                    Assert.IsNull(publishedValues[index].Evidence[0].OriginalText);
+                }
+            }
+            finally
+            {
+                Directory.Delete(sourceRoot, true);
+            }
+        }
+
+        /// <summary>XMZADD 20260910 验证参考名称与使用模块证据中的凭据形态不能绕过完整快照公开校验。</summary>
+        [TestMethod]
+        public async Task EmptyRemote_NewNameLayerEvidenceCredential_ReturnsValidationFailure()
+        {
+            var client = new StubGitHubDictionaryClient("100", new[] { "100" });
+            client.Manifest = new SnapshotManifest
+            {
+                FormatVersion = 1,
+                Revision = 0L,
+                SnapshotPath = "snapshot/latest.json.gz",
+                GeneratedAtUtc = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+            };
+            string sourceRoot = CreateSourceRoot();
+            try
+            {
+                for (int caseIndex = 0; caseIndex < 7; caseIndex++)
+                {
+                    SnapshotData current = CreateFullSnapshot(1);
+                    MetadataValue unsafeValue = CreatePrivateNameValue("待审阅名称");
+                    unsafeValue.Evidence[0].SourcePath = "Order/OrderEntity.vb";
+                    unsafeValue.Evidence[0].RawValue = null;
+                    unsafeValue.Evidence[0].OriginalText = null;
+                    unsafeValue.Evidence[0].Explanation = "Pwd=fake-test-only";
+                    if (caseIndex == 0)
+                    {
+                        current.Tables[0].SuggestedChineseName = unsafeValue;
+                    }
+                    else if (caseIndex == 1)
+                    {
+                        current.Tables[0].AlternativeChineseNames.Add(unsafeValue);
+                    }
+                    else if (caseIndex == 2)
+                    {
+                        current.Tables[0].UsedByModules.Add(unsafeValue);
+                    }
+                    else if (caseIndex == 3)
+                    {
+                        current.Tables[0].Fields[0].SuggestedChineseName = unsafeValue;
+                    }
+                    else if (caseIndex == 4)
+                    {
+                        current.Tables[0].Fields[0].AlternativeChineseNames.Add(unsafeValue);
+                    }
+                    else if (caseIndex == 5)
+                    {
+                        current.Tables[0].RejectedSuggestionFingerprints.Add("Pwd=fake-test-only");
+                    }
+                    else
+                    {
+                        current.Tables[0].Fields[0].RejectedSuggestionFingerprints.Add("Pwd=fake-test-only");
+                    }
+                    StructurePublishService service = CreateService(client, new SnapshotData(), current);
+
+                    StructurePublishResult preview = await service.PreviewAsync(
+                        CreateRequest(sourceRoot, null), CancellationToken.None);
+
+                    Assert.AreEqual(StructurePublishOutcome.ValidationFailed, preview.Outcome,
+                        "参考层位置未通过公开凭据校验，测试索引：" + caseIndex);
+                    Assert.AreEqual(StructurePublishValidationReason.FullSnapshotInvalid, preview.ValidationReason);
+                }
+            }
+            finally
+            {
+                Directory.Delete(sourceRoot, true);
+            }
+        }
+
         /// <summary>XMZADD 20260902 验证仓库初始化后仍严格执行普通 Issue 的操作上限，不把大型增量误作完整快照。</summary>
         [TestMethod]
         public async Task ExistingRemote_LargeIncrement_RemainsIssueLimited()
@@ -1218,6 +1341,27 @@ namespace SHB.EosDataDictionary.Tests
                 snapshot.Tables.Add(table);
             }
             return snapshot;
+        }
+
+        /// <summary>XMZADD 20260910 创建包含测试凭据和长源码正文的名称证据以验证公开净化边界。</summary>
+        private static MetadataValue CreatePrivateNameValue(string value)
+        {
+            return new MetadataValue
+            {
+                Value = value,
+                Status = ConfidenceStatus.CodeEvidence,
+                Evidence = new List<EvidenceItem>
+                {
+                    new EvidenceItem
+                    {
+                        SourceType = "EOS源码",
+                        SourcePath = @"C:\Users\tester\private\OrderEntity.vb",
+                        RawValue = "Pwd=fake-test-only",
+                        OriginalText = new string('源', 300),
+                        Explanation = "名称来源"
+                    }
+                }
+            };
         }
 
         /// <summary>XMZADD 20260901 创建两个既有业务表以验证跨模块知识翻译的原子应用。</summary>

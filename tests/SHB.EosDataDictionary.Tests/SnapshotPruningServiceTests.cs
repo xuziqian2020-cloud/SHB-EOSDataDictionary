@@ -81,6 +81,36 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual("T_ORDER=订单", result.Snapshot.Tables[0].ChineseName.Evidence[0].OriginalText);
         }
 
+        /// <summary>XMZADD 20260910 验证裁剪深复制正式名称之外的参考层及其审阅证据。</summary>
+        [TestMethod]
+        public void Prune_RetainedNewNameLayers_PreservesValuesAndEvidence()
+        {
+            TableMetadata table = CreateTable("T_ORDER", "TABLE", 10L, DictionaryTableCategory.Business);
+            FieldMetadata field = table.Fields[0];
+            table.SuggestedChineseName = CreateNameValue("订单参考名", "C:\\audit\\table.vb");
+            table.AlternativeChineseNames.Add(CreateNameValue("订单单据", "Table/Order.vb"));
+            table.RejectedSuggestionFingerprints.Add("table-rejected");
+            table.UsedByModules.Add(CreateNameValue("销售模块", "Module/Sales.vb"));
+            field.SuggestedChineseName = CreateNameValue("订单内码参考名", "C:\\audit\\field.vb");
+            field.AlternativeChineseNames.Add(CreateNameValue("订单主键", "Field/Order.vb"));
+            field.RejectedSuggestionFingerprints.Add("field-rejected");
+
+            SnapshotPruningResult result = new SnapshotPruningService().Prune(CreateSnapshot(table));
+            TableMetadata copiedTable = result.Snapshot.Tables[0];
+            FieldMetadata copiedField = copiedTable.Fields[0];
+
+            Assert.AreEqual("订单参考名", copiedTable.SuggestedChineseName.Value);
+            Assert.AreEqual("C:\\audit\\table.vb", copiedTable.SuggestedChineseName.Evidence[0].SourcePath);
+            Assert.AreEqual("订单单据", copiedTable.AlternativeChineseNames[0].Value);
+            Assert.AreEqual("table-rejected", copiedTable.RejectedSuggestionFingerprints[0]);
+            Assert.AreEqual("销售模块", copiedTable.UsedByModules[0].Value);
+            Assert.AreEqual("订单内码参考名", copiedField.SuggestedChineseName.Value);
+            Assert.AreEqual("订单主键", copiedField.AlternativeChineseNames[0].Value);
+            Assert.AreEqual("field-rejected", copiedField.RejectedSuggestionFingerprints[0]);
+            Assert.AreNotSame(table.SuggestedChineseName, copiedTable.SuggestedChineseName);
+            Assert.AreNotSame(table.SuggestedChineseName.Evidence[0], copiedTable.SuggestedChineseName.Evidence[0]);
+        }
+
         /// <summary>XMZADD 20260901 验证没有字段的物理表即使有数据和人工业务分类也必须排除。</summary>
         [TestMethod]
         public void Prune_TableWithoutFields_IsAlwaysExcluded()
@@ -472,6 +502,26 @@ namespace SHB.EosDataDictionary.Tests
                 EnumItems = new List<EnumItemMetadata>()
             });
             return table;
+        }
+
+        /// <summary>XMZADD 20260910 创建带完整审阅证据的参考名称以验证裁剪复制边界。</summary>
+        private static MetadataValue CreateNameValue(string value, string sourcePath)
+        {
+            return new MetadataValue
+            {
+                Value = value,
+                Status = ConfidenceStatus.CodeEvidence,
+                Evidence = new List<EvidenceItem>
+                {
+                    new EvidenceItem
+                    {
+                        SourceType = "EOS源码",
+                        SourcePath = sourcePath,
+                        RawValue = "原始值",
+                        OriginalText = "原始源码正文"
+                    }
+                }
+            };
         }
 
         private static RelationMetadata CreateRelation(string parentTable, string childTable)

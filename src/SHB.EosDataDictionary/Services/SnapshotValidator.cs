@@ -78,6 +78,10 @@ namespace SHB.EosDataDictionary.Services
                 EnsurePublicText(table.ObjectName);
                 EnsurePublicText(table.ObjectType);
                 ValidatePublicMetadataValue(table.ChineseName);
+                ValidatePublicMetadataValue(table.SuggestedChineseName);
+                ValidatePublicMetadataValues(table.AlternativeChineseNames);
+                ValidatePublicTexts(table.RejectedSuggestionFingerprints);
+                ValidatePublicMetadataValues(table.UsedByModules);
                 ValidatePublicMetadataValue(table.ModuleName);
                 ValidatePublicMetadataValue(table.EntityName);
                 ValidatePublicMetadataValue(table.BusinessMeaning);
@@ -114,6 +118,9 @@ namespace SHB.EosDataDictionary.Services
             EnsurePublicText(field.DataType);
             EnsurePublicText(field.LengthText);
             ValidatePublicMetadataValue(field.ChineseName);
+            ValidatePublicMetadataValue(field.SuggestedChineseName);
+            ValidatePublicMetadataValues(field.AlternativeChineseNames);
+            ValidatePublicTexts(field.RejectedSuggestionFingerprints);
             ValidatePublicMetadataValue(field.EntityPropertyName);
             ValidatePublicMetadataValue(field.BusinessMeaning);
             ValidatePublicMetadataValue(field.Usage);
@@ -172,6 +179,32 @@ namespace SHB.EosDataDictionary.Services
                 EnsurePublicRelativePath(evidence.SourcePath);
                 EnsurePublicText(evidence.RuleName);
                 EnsurePublicText(evidence.Explanation);
+            }
+        }
+
+        /// <summary>XMZADD 20260911 逐项校验参考名称和使用模块，防止新增证据层绕过公开内容安全边界。</summary>
+        private static void ValidatePublicMetadataValues(IList<MetadataValue> values)
+        {
+            if (values == null)
+            {
+                return;
+            }
+            for (int index = 0; index < values.Count; index++)
+            {
+                ValidatePublicMetadataValue(values[index]);
+            }
+        }
+
+        /// <summary>XMZADD 20260911 校验拒绝建议指纹文本，避免异常维护内容携带凭据或本机路径。</summary>
+        private static void ValidatePublicTexts(IList<string> values)
+        {
+            if (values == null)
+            {
+                return;
+            }
+            for (int index = 0; index < values.Count; index++)
+            {
+                EnsurePublicText(values[index]);
             }
         }
 

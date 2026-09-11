@@ -210,6 +210,27 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual(0, snapshot.Abbreviations.Count);
         }
 
+        /// <summary>XMZADD 20260910 验证正式中文名与参考名称层默认具有可直接维护的空集合。</summary>
+        [TestMethod]
+        public void MetadataModels_NewNameLayers_AreInitialized()
+        {
+            var table = new TableMetadata();
+            var field = new FieldMetadata();
+
+            Assert.IsNull(table.SuggestedChineseName);
+            Assert.IsNotNull(table.AlternativeChineseNames);
+            Assert.IsNotNull(table.RejectedSuggestionFingerprints);
+            Assert.IsNotNull(table.UsedByModules);
+            Assert.AreEqual(0, table.AlternativeChineseNames.Count);
+            Assert.AreEqual(0, table.RejectedSuggestionFingerprints.Count);
+            Assert.AreEqual(0, table.UsedByModules.Count);
+            Assert.IsNull(field.SuggestedChineseName);
+            Assert.IsNotNull(field.AlternativeChineseNames);
+            Assert.IsNotNull(field.RejectedSuggestionFingerprints);
+            Assert.AreEqual(0, field.AlternativeChineseNames.Count);
+            Assert.AreEqual(0, field.RejectedSuggestionFingerprints.Count);
+        }
+
         /// <summary>XMZADD 20260901 验证知识库精确匹配具有独立可信状态。</summary>
         [TestMethod]
         public void ConfidenceStatus_ContainsKnowledgeBaseEvidence()

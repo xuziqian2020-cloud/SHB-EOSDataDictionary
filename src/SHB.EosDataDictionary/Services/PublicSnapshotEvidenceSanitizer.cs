@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using SHB.EosDataDictionary.Models;
 
@@ -24,6 +25,9 @@ namespace SHB.EosDataDictionary.Services
                     continue;
                 }
                 SanitizeMetadataValue(table.ChineseName);
+                SanitizeMetadataValue(table.SuggestedChineseName);
+                SanitizeMetadataValues(table.AlternativeChineseNames);
+                SanitizeMetadataValues(table.UsedByModules);
                 SanitizeMetadataValue(table.ModuleName);
                 SanitizeMetadataValue(table.EntityName);
                 SanitizeMetadataValue(table.BusinessMeaning);
@@ -73,6 +77,8 @@ namespace SHB.EosDataDictionary.Services
                 return;
             }
             SanitizeMetadataValue(field.ChineseName);
+            SanitizeMetadataValue(field.SuggestedChineseName);
+            SanitizeMetadataValues(field.AlternativeChineseNames);
             SanitizeMetadataValue(field.EntityPropertyName);
             SanitizeMetadataValue(field.BusinessMeaning);
             SanitizeMetadataValue(field.Usage);
@@ -122,6 +128,19 @@ namespace SHB.EosDataDictionary.Services
                 evidence.SourcePath = SanitizeEvidencePath(evidence.SourcePath);
                 evidence.RawValue = null;
                 evidence.OriginalText = null;
+            }
+        }
+
+        /// <summary>XMZADD 20260910 统一清理参考名称与使用模块集合，避免新增证据层绕过公开发布边界。</summary>
+        private static void SanitizeMetadataValues(IList<MetadataValue> values)
+        {
+            if (values == null)
+            {
+                return;
+            }
+            for (int index = 0; index < values.Count; index++)
+            {
+                SanitizeMetadataValue(values[index]);
             }
         }
 

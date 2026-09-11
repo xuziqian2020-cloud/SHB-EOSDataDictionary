@@ -396,6 +396,10 @@ namespace SHB.EosDataDictionary.Services
                 ObjectName = source.ObjectName,
                 ObjectType = source.ObjectType,
                 ChineseName = CopyMetadataValue(source.ChineseName),
+                SuggestedChineseName = CopyMetadataValue(source.SuggestedChineseName),
+                AlternativeChineseNames = CopyMetadataValues(source.AlternativeChineseNames),
+                RejectedSuggestionFingerprints = CopyStrings(source.RejectedSuggestionFingerprints),
+                UsedByModules = CopyMetadataValues(source.UsedByModules),
                 ModuleName = CopyMetadataValue(source.ModuleName),
                 EntityName = CopyMetadataValue(source.EntityName),
                 BusinessMeaning = CopyMetadataValue(source.BusinessMeaning),
@@ -487,6 +491,9 @@ namespace SHB.EosDataDictionary.Services
             {
                 FieldName = source.FieldName,
                 ChineseName = CopyMetadataValue(source.ChineseName),
+                SuggestedChineseName = CopyMetadataValue(source.SuggestedChineseName),
+                AlternativeChineseNames = CopyMetadataValues(source.AlternativeChineseNames),
+                RejectedSuggestionFingerprints = CopyStrings(source.RejectedSuggestionFingerprints),
                 OwnerTableName = source.OwnerTableName,
                 EntityPropertyName = CopyMetadataValue(source.EntityPropertyName),
                 BusinessMeaning = CopyMetadataValue(source.BusinessMeaning),
@@ -583,6 +590,36 @@ namespace SHB.EosDataDictionary.Services
                         Explanation = evidence.Explanation
                     });
                 }
+            }
+            return result;
+        }
+
+        /// <summary>XMZADD 20260910 深复制参考名称和模块集合，避免裁剪结果与本地审阅状态共享证据对象。</summary>
+        private static IList<MetadataValue> CopyMetadataValues(IList<MetadataValue> source)
+        {
+            var result = new List<MetadataValue>();
+            if (source == null)
+            {
+                return result;
+            }
+            for (int index = 0; index < source.Count; index++)
+            {
+                result.Add(CopyMetadataValue(source[index]));
+            }
+            return result;
+        }
+
+        /// <summary>XMZADD 20260910 独立复制拒绝建议指纹，避免公开裁剪副本反向影响本地审阅状态。</summary>
+        private static IList<string> CopyStrings(IList<string> source)
+        {
+            var result = new List<string>();
+            if (source == null)
+            {
+                return result;
+            }
+            for (int index = 0; index < source.Count; index++)
+            {
+                result.Add(source[index]);
             }
             return result;
         }

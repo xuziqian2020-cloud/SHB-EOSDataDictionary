@@ -31,6 +31,65 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual("222", service.AppliedHistory[1].AuthorGitHubUserId);
         }
 
+        /// <summary>XMZADD 20260910 验证事务克隆不会合并或冻结正式名称之外的参考名称层。</summary>
+        [TestMethod]
+        public void Apply_NewNameLayersRemainIndependentAndMutableAfterTransactionalClone()
+        {
+            SnapshotData snapshot = CreateSnapshot("旧名称");
+            TableMetadata sourceTable = snapshot.Tables[0];
+            FieldMetadata sourceField = sourceTable.Fields[1];
+            sourceTable.SuggestedChineseName = ManualValue("订单参考名");
+            sourceTable.AlternativeChineseNames.Add(ManualValue("订单单据"));
+            sourceTable.RejectedSuggestionFingerprints.Add("table-rejected");
+            sourceTable.UsedByModules.Add(ManualValue("销售模块"));
+            sourceField.SuggestedChineseName = ManualValue("名称字段参考名");
+            sourceField.AlternativeChineseNames.Add(ManualValue("订单名称"));
+            sourceField.RejectedSuggestionFingerprints.Add("field-rejected");
+            sourceTable.AlternativeChineseNames[0].Evidence.Add(new EvidenceItem { RuleName = "TableNameEvidence" });
+            sourceField.AlternativeChineseNames[0].Evidence.Add(new EvidenceItem { RuleName = "FieldNameEvidence" });
+            var service = new DictionaryEventApplyService();
+
+            service.Apply(snapshot,
+                CreateSet("keep_name_layers", "dbo.T_ORDER", "FNAME", "ChineseName", "旧名称", "正式名称"),
+                1L, "111", EmptyPublishers());
+
+            TableMetadata appliedTable = snapshot.Tables[0];
+            FieldMetadata appliedField = appliedTable.Fields[1];
+            Assert.AreNotSame(sourceTable, appliedTable);
+            Assert.AreNotSame(sourceField, appliedField);
+            Assert.AreNotSame(sourceTable.AlternativeChineseNames, appliedTable.AlternativeChineseNames);
+            Assert.AreNotSame(sourceField.AlternativeChineseNames, appliedField.AlternativeChineseNames);
+            Assert.AreNotSame(sourceTable.AlternativeChineseNames[0], appliedTable.AlternativeChineseNames[0]);
+            Assert.AreNotSame(sourceField.AlternativeChineseNames[0], appliedField.AlternativeChineseNames[0]);
+            Assert.AreNotSame(sourceTable.AlternativeChineseNames[0].Evidence,
+                appliedTable.AlternativeChineseNames[0].Evidence);
+            Assert.AreNotSame(sourceField.AlternativeChineseNames[0].Evidence,
+                appliedField.AlternativeChineseNames[0].Evidence);
+            Assert.AreNotSame(sourceTable.AlternativeChineseNames[0].Evidence[0],
+                appliedTable.AlternativeChineseNames[0].Evidence[0]);
+            Assert.AreNotSame(sourceField.AlternativeChineseNames[0].Evidence[0],
+                appliedField.AlternativeChineseNames[0].Evidence[0]);
+            Assert.AreEqual("订单", appliedTable.ChineseName.Value);
+            Assert.AreEqual("自动名称", appliedTable.ChineseName.OriginalAutomaticValue);
+            Assert.AreEqual("订单参考名", appliedTable.SuggestedChineseName.Value);
+            Assert.AreEqual("订单单据", appliedTable.AlternativeChineseNames[0].Value);
+            Assert.AreEqual("table-rejected", appliedTable.RejectedSuggestionFingerprints[0]);
+            Assert.AreEqual("销售模块", appliedTable.UsedByModules[0].Value);
+            Assert.AreEqual("名称字段参考名", appliedField.SuggestedChineseName.Value);
+            Assert.AreEqual("订单名称", appliedField.AlternativeChineseNames[0].Value);
+            Assert.AreEqual("field-rejected", appliedField.RejectedSuggestionFingerprints[0]);
+            appliedTable.AlternativeChineseNames.Add(ManualValue("订单档案"));
+            appliedTable.RejectedSuggestionFingerprints.Add("table-rejected-2");
+            appliedTable.UsedByModules.Add(ManualValue("仓储模块"));
+            appliedField.AlternativeChineseNames.Add(ManualValue("名称属性"));
+            appliedField.RejectedSuggestionFingerprints.Add("field-rejected-2");
+            Assert.AreEqual(2, appliedTable.AlternativeChineseNames.Count);
+            Assert.AreEqual(2, appliedTable.RejectedSuggestionFingerprints.Count);
+            Assert.AreEqual(2, appliedTable.UsedByModules.Count);
+            Assert.AreEqual(2, appliedField.AlternativeChineseNames.Count);
+            Assert.AreEqual(2, appliedField.RejectedSuggestionFingerprints.Count);
+        }
+
         /// <summary>XMZADD 20260901 验证结构发布证据值在增量重放中保持自动可信状态和相对证据，而非误锁为人工确认。</summary>
         [TestMethod]
         public void Apply_PublisherEvidenceSet_PreservesAutomaticEvidenceState()

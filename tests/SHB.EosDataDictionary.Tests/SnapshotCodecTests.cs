@@ -2,7 +2,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Reflection;
+using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SHB.EosDataDictionary.Models;
 using SHB.EosDataDictionary.Services;
@@ -195,6 +197,140 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual("T_CUSTOMER", restored.Tables[0].Relations[0].ParentTableName);
             Assert.AreEqual("dbo", restored.Tables[0].Relations[0].ParentSchemaName);
             Assert.AreEqual("dbo", restored.Tables[0].Relations[0].ChildSchemaName);
+        }
+
+        /// <summary>XMZADD 20260910 验证格式一快照往返时正式名称与参考名称层保持独立且完整。</summary>
+        [TestMethod]
+        public void EncodeAndDecode_NewNameLayers_RoundTripAndKeepFormatVersionOne()
+        {
+            var codec = new SnapshotCodec();
+            SnapshotData source = CreateSnapshot(false);
+            TableMetadata table = source.Tables[0];
+            FieldMetadata field = table.Fields[0];
+            table.ChineseName.OriginalAutomaticValue = "数据库正式名称";
+            table.SuggestedChineseName = new MetadataValue { Value = "客户资料参考名" };
+            table.AlternativeChineseNames.Add(new MetadataValue { Value = "客户档案" });
+            table.RejectedSuggestionFingerprints.Add("table-fingerprint");
+            table.UsedByModules.Add(new MetadataValue { Value = "销售模块" });
+            field.SuggestedChineseName = new MetadataValue { Value = "客户标识参考名" };
+            field.AlternativeChineseNames.Add(new MetadataValue { Value = "客户主键" });
+            field.RejectedSuggestionFingerprints.Add("field-fingerprint");
+
+            byte[] content = codec.Encode(source);
+            SnapshotData restored = codec.DecodeAndValidate(content, codec.ComputeSha256(content));
+            TableMetadata restoredTable = restored.Tables[0];
+            FieldMetadata restoredField = restoredTable.Fields[0];
+
+            Assert.AreEqual(1, restored.FormatVersion);
+            Assert.AreEqual("客户", restoredTable.ChineseName.Value);
+            Assert.AreEqual("数据库正式名称", restoredTable.ChineseName.OriginalAutomaticValue);
+            Assert.AreEqual("客户资料参考名", restoredTable.SuggestedChineseName.Value);
+            Assert.AreEqual("客户档案", restoredTable.AlternativeChineseNames[0].Value);
+            Assert.AreEqual("table-fingerprint", restoredTable.RejectedSuggestionFingerprints[0]);
+            Assert.AreEqual("销售模块", restoredTable.UsedByModules[0].Value);
+            Assert.AreEqual("客户标识参考名", restoredField.SuggestedChineseName.Value);
+            Assert.AreEqual("客户主键", restoredField.AlternativeChineseNames[0].Value);
+            Assert.AreEqual("field-fingerprint", restoredField.RejectedSuggestionFingerprints[0]);
+            restoredTable.AlternativeChineseNames.Add(new MetadataValue { Value = "客户资料" });
+            restoredTable.RejectedSuggestionFingerprints.Add("table-fingerprint-2");
+            restoredTable.UsedByModules.Add(new MetadataValue { Value = "仓储模块" });
+            restoredField.AlternativeChineseNames.Add(new MetadataValue { Value = "客户编号" });
+            restoredField.RejectedSuggestionFingerprints.Add("field-fingerprint-2");
+            Assert.AreEqual(2, restoredTable.AlternativeChineseNames.Count);
+            Assert.AreEqual(2, restoredTable.RejectedSuggestionFingerprints.Count);
+            Assert.AreEqual(2, restoredTable.UsedByModules.Count);
+            Assert.AreEqual(2, restoredField.AlternativeChineseNames.Count);
+            Assert.AreEqual(2, restoredField.RejectedSuggestionFingerprints.Count);
+        }
+
+        /// <summary>XMZADD 20260910 验证参考名称、使用模块和拒绝指纹的插入顺序不影响格式一快照。</summary>
+        [TestMethod]
+        public void Encode_NewNameLayerCollectionsInDifferentOrder_ProducesSameSha256()
+        {
+            var codec = new SnapshotCodec();
+            SnapshotData first = CreateSnapshot(false);
+            SnapshotData second = CreateSnapshot(false);
+            TableMetadata firstTable = first.Tables[0];
+            TableMetadata secondTable = second.Tables[0];
+            FieldMetadata firstField = firstTable.Fields[0];
+            FieldMetadata secondField = secondTable.Fields[0];
+            firstTable.AlternativeChineseNames.Add(new MetadataValue { Value = "B名称" });
+            firstTable.AlternativeChineseNames.Add(new MetadataValue { Value = "A名称" });
+            secondTable.AlternativeChineseNames.Add(new MetadataValue { Value = "A名称" });
+            secondTable.AlternativeChineseNames.Add(new MetadataValue { Value = "B名称" });
+            firstTable.UsedByModules.Add(new MetadataValue { Value = "B模块" });
+            firstTable.UsedByModules.Add(new MetadataValue { Value = "A模块" });
+            secondTable.UsedByModules.Add(new MetadataValue { Value = "A模块" });
+            secondTable.UsedByModules.Add(new MetadataValue { Value = "B模块" });
+            firstTable.RejectedSuggestionFingerprints.Add("b-table");
+            firstTable.RejectedSuggestionFingerprints.Add("a-table");
+            secondTable.RejectedSuggestionFingerprints.Add("a-table");
+            secondTable.RejectedSuggestionFingerprints.Add("b-table");
+            firstField.AlternativeChineseNames.Add(new MetadataValue { Value = "B字段" });
+            firstField.AlternativeChineseNames.Add(new MetadataValue { Value = "A字段" });
+            secondField.AlternativeChineseNames.Add(new MetadataValue { Value = "A字段" });
+            secondField.AlternativeChineseNames.Add(new MetadataValue { Value = "B字段" });
+            firstField.RejectedSuggestionFingerprints.Add("b-field");
+            firstField.RejectedSuggestionFingerprints.Add("a-field");
+            secondField.RejectedSuggestionFingerprints.Add("a-field");
+            secondField.RejectedSuggestionFingerprints.Add("b-field");
+
+            byte[] firstContent = codec.Encode(first);
+            byte[] secondContent = codec.Encode(second);
+            SnapshotData restored = codec.DecodeAndValidate(firstContent, codec.ComputeSha256(firstContent));
+
+            Assert.AreEqual(codec.ComputeSha256(firstContent), codec.ComputeSha256(secondContent));
+            Assert.AreEqual("A名称", restored.Tables[0].AlternativeChineseNames[0].Value);
+            Assert.AreEqual("A模块", restored.Tables[0].UsedByModules[0].Value);
+            Assert.AreEqual("a-table", restored.Tables[0].RejectedSuggestionFingerprints[0]);
+            Assert.AreEqual("A字段", restored.Tables[0].Fields[0].AlternativeChineseNames[0].Value);
+            Assert.AreEqual("a-field", restored.Tables[0].Fields[0].RejectedSuggestionFingerprints[0]);
+            Assert.AreEqual("B名称", firstTable.AlternativeChineseNames[0].Value);
+        }
+
+        /// <summary>XMZADD 20260910 验证缺少参考名称成员的修订十一快照解码后仍提供非空集合。</summary>
+        [TestMethod]
+        public void DecodeAndValidate_RevisionElevenWithoutNewNameLayers_InitializesLists()
+        {
+            const string legacyJson = "{\"Abbreviations\":[],\"ExcludedObjects\":[],\"FormatVersion\":1," +
+                "\"RefreshedAt\":\"\\/Date(0)\\/\",\"Revision\":11,\"Tables\":[{" +
+                "\"Fields\":[{\"EnumItems\":[],\"FieldName\":\"FID\"}]," +
+                "\"ObjectName\":\"T_ORDER\",\"ObjectType\":\"TABLE\",\"Relations\":[]," +
+                "\"SchemaName\":\"dbo\"}]}";
+            var codec = new SnapshotCodec();
+            byte[] content = CompressUtf8(legacyJson);
+
+            SnapshotData restored = codec.DecodeAndValidate(content, codec.ComputeSha256(content));
+
+            Assert.AreEqual(11L, restored.Revision);
+            Assert.IsNotNull(restored.Tables[0].AlternativeChineseNames);
+            Assert.IsNotNull(restored.Tables[0].RejectedSuggestionFingerprints);
+            Assert.IsNotNull(restored.Tables[0].UsedByModules);
+            Assert.IsNotNull(restored.Tables[0].Fields[0].AlternativeChineseNames);
+            Assert.IsNotNull(restored.Tables[0].Fields[0].RejectedSuggestionFingerprints);
+        }
+
+        /// <summary>XMZADD 20260910 验证显式空参考名称集合不会绕过旧快照兼容归一化。</summary>
+        [TestMethod]
+        public void DecodeAndValidate_ExplicitNullNameLayerLists_InitializesLists()
+        {
+            const string legacyJson = "{\"Abbreviations\":[],\"ExcludedObjects\":[],\"FormatVersion\":1," +
+                "\"RefreshedAt\":\"\\/Date(0)\\/\",\"Revision\":11,\"Tables\":[{" +
+                "\"AlternativeChineseNames\":null,\"Fields\":[{\"AlternativeChineseNames\":null," +
+                "\"EnumItems\":[],\"FieldName\":\"FID\",\"RejectedSuggestionFingerprints\":null}]," +
+                "\"ObjectName\":\"T_ORDER\",\"ObjectType\":\"TABLE\"," +
+                "\"RejectedSuggestionFingerprints\":null,\"Relations\":[],\"SchemaName\":\"dbo\"," +
+                "\"UsedByModules\":null}]}";
+            var codec = new SnapshotCodec();
+            byte[] content = CompressUtf8(legacyJson);
+
+            SnapshotData restored = codec.DecodeAndValidate(content, codec.ComputeSha256(content));
+
+            Assert.IsNotNull(restored.Tables[0].AlternativeChineseNames);
+            Assert.IsNotNull(restored.Tables[0].RejectedSuggestionFingerprints);
+            Assert.IsNotNull(restored.Tables[0].UsedByModules);
+            Assert.IsNotNull(restored.Tables[0].Fields[0].AlternativeChineseNames);
+            Assert.IsNotNull(restored.Tables[0].Fields[0].RejectedSuggestionFingerprints);
         }
 
         /// <summary>XMZADD 20260901 验证远程内容哈希不符时不会返回未经确认的结构数据。</summary>
@@ -958,6 +1094,20 @@ namespace SHB.EosDataDictionary.Tests
                     ? new List<AbbreviationEntry> { orderAbbreviation, materialAbbreviation }
                     : new List<AbbreviationEntry> { materialAbbreviation, orderAbbreviation }
             };
+        }
+
+        /// <summary>XMZADD 20260910 将旧版 JSON 压缩为真实快照输入以验证向后兼容。</summary>
+        private static byte[] CompressUtf8(string json)
+        {
+            using (var output = new MemoryStream())
+            {
+                using (var compressed = new GZipStream(output, CompressionMode.Compress, true))
+                {
+                    byte[] bytes = Encoding.UTF8.GetBytes(json);
+                    compressed.Write(bytes, 0, bytes.Length);
+                }
+                return output.ToArray();
+            }
         }
 
         /// <summary>XMZADD 20260902 按索引即时生成测试项，避免大型数量边界测试预先占用等量对象内存。</summary>
