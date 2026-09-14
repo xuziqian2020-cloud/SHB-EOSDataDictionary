@@ -82,7 +82,11 @@ namespace SHB.EosDataDictionary.Services
                 {
                     AddEvidence(fieldEvidence, MakeFieldKey(item.ObjectName, item.FieldName), item);
                 }
-                if (!string.IsNullOrWhiteSpace(item.EnumName) && item.Evidence != null && item.Evidence.RuleName == "EnumMember")
+                // 生成实体枚举可能只是代码生成器镜像，必须存在更高强度的上下文或业务证据才能发布。
+                if (!string.IsNullOrWhiteSpace(item.EnumName) &&
+                    item.Evidence != null &&
+                    item.Evidence.RuleName == "EnumMember" &&
+                    item.Strength != SourceEvidenceStrength.NamingOnly)
                 {
                     AddEvidence(enumEvidence, item.EnumName, item);
                 }

@@ -251,6 +251,7 @@ namespace SHB.EosDataDictionary.Tests
                     EnumValue = "Approved",
                     EnumRawValue = "1",
                     EnumChineseName = "已审核",
+                    Strength = SourceEvidenceStrength.DirectBusinessCode,
                     Evidence = new EvidenceItem { RuleName = "EnumMember" }
                 }
             };
@@ -260,6 +261,90 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual("DemoStatus", snapshot.Tables[0].Fields[0].EnumName.Value);
             Assert.AreEqual(1, snapshot.Tables[0].Fields[0].EnumItems.Count);
             Assert.AreEqual("1", snapshot.Tables[0].Fields[0].EnumItems[0].Value);
+            Assert.AreEqual("已审核", snapshot.Tables[0].Fields[0].EnumItems[0].ChineseName.Value);
+        }
+
+        /// <summary>XMZADD 20260914 验证生成实体的命名级枚举不能单独进入正式字段枚举。</summary>
+        [TestMethod]
+        public void Enrich_GeneratedEntityNamingOnlyEnum_DoesNotPublishEnum()
+        {
+            SnapshotData snapshot = CreateSingleFieldSnapshot("T_DEMO_ORDER", "FSTATUS");
+            var evidence = new List<SourceEvidence>
+            {
+                new SourceEvidence
+                {
+                    ObjectName = "T_DEMO_ORDER",
+                    FieldName = "FSTATUS",
+                    EntityName = "t_T_DEMO_ORDER",
+                    PropertyTypeName = "DemoStatus",
+                    Strength = SourceEvidenceStrength.Authoritative,
+                    Evidence = new EvidenceItem
+                    {
+                        SourceType = "EOS生成实体",
+                        RuleName = "EntityProperty"
+                    }
+                },
+                new SourceEvidence
+                {
+                    EnumName = "DemoStatus",
+                    EnumValue = "Approved",
+                    EnumRawValue = "1",
+                    Strength = SourceEvidenceStrength.NamingOnly,
+                    UsageKind = SourceUsageKind.Enumeration,
+                    Evidence = new EvidenceItem
+                    {
+                        SourceType = "EOS生成实体",
+                        RuleName = "EnumMember"
+                    }
+                }
+            };
+
+            MetadataEnrichmentService.Enrich(snapshot, evidence);
+
+            Assert.IsNull(snapshot.Tables[0].Fields[0].EnumName);
+            Assert.AreEqual(0, snapshot.Tables[0].Fields[0].EnumItems.Count);
+        }
+
+        /// <summary>XMZADD 20260914 验证真实业务源码的直接枚举证据仍可进入正式字段枚举。</summary>
+        [TestMethod]
+        public void Enrich_BusinessCodeEnum_PublishesEnum()
+        {
+            SnapshotData snapshot = CreateSingleFieldSnapshot("T_DEMO_ORDER", "FSTATUS");
+            var evidence = new List<SourceEvidence>
+            {
+                new SourceEvidence
+                {
+                    ObjectName = "T_DEMO_ORDER",
+                    FieldName = "FSTATUS",
+                    EntityName = "t_T_DEMO_ORDER",
+                    PropertyTypeName = "DemoStatus",
+                    Strength = SourceEvidenceStrength.Authoritative,
+                    Evidence = new EvidenceItem
+                    {
+                        SourceType = "EOS生成实体",
+                        RuleName = "EntityProperty"
+                    }
+                },
+                new SourceEvidence
+                {
+                    EnumName = "DemoStatus",
+                    EnumValue = "Approved",
+                    EnumRawValue = "1",
+                    EnumChineseName = "已审核",
+                    Strength = SourceEvidenceStrength.DirectBusinessCode,
+                    UsageKind = SourceUsageKind.Enumeration,
+                    Evidence = new EvidenceItem
+                    {
+                        SourceType = "EOS业务源码",
+                        RuleName = "EnumMember"
+                    }
+                }
+            };
+
+            MetadataEnrichmentService.Enrich(snapshot, evidence);
+
+            Assert.AreEqual("DemoStatus", snapshot.Tables[0].Fields[0].EnumName.Value);
+            Assert.AreEqual(1, snapshot.Tables[0].Fields[0].EnumItems.Count);
             Assert.AreEqual("已审核", snapshot.Tables[0].Fields[0].EnumItems[0].ChineseName.Value);
         }
 
@@ -285,6 +370,7 @@ namespace SHB.EosDataDictionary.Tests
                     EnumValue = "Approved",
                     EnumRawValue = "1",
                     EnumChineseName = "已审核",
+                    Strength = SourceEvidenceStrength.DirectBusinessCode,
                     Evidence = new EvidenceItem { RuleName = "EnumMember" }
                 }
             };
@@ -543,6 +629,7 @@ namespace SHB.EosDataDictionary.Tests
                     EnumValue = "Approved",
                     EnumRawValue = "1",
                     EnumChineseName = "已审核",
+                    Strength = SourceEvidenceStrength.DirectBusinessCode,
                     Evidence = new EvidenceItem
                     {
                         RuleName = "EnumMember",

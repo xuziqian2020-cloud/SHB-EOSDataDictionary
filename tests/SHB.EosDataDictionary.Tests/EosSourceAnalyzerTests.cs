@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SHB.EosDataDictionary.Services;
@@ -10,6 +11,627 @@ namespace SHB.EosDataDictionary.Tests
     [TestClass]
     public sealed class EosSourceAnalyzerTests
     {
+        /// <summary>XMZADD 20260911 验证带 BOM 的 UTF-8 老源码不会把标记字符混入首行声明。</summary>
+        [TestMethod]
+        public void Decode_Utf8BomSource_PreservesChineseCaption()
+        {
+            byte[] textBytes = new UTF8Encoding(false, true).GetBytes(".Caption = \"货主公司ID\"");
+            byte[] preamble = Encoding.UTF8.GetPreamble();
+            var bytes = new byte[preamble.Length + textBytes.Length];
+            Buffer.BlockCopy(preamble, 0, bytes, 0, preamble.Length);
+            Buffer.BlockCopy(textBytes, 0, bytes, preamble.Length, textBytes.Length);
+
+            SourceTextDecodeResult result = new SourceTextDecoder().Decode(bytes);
+
+            Assert.AreEqual(".Caption = \"货主公司ID\"", result.Text);
+            Assert.AreEqual("UTF-8 BOM", result.EncodingName);
+            Assert.IsTrue(result.IsReliable);
+            Assert.IsFalse(result.HasMojibake);
+        }
+
+        /// <summary>XMZADD 20260911 验证无 BOM 的严格 UTF-8 在多编码均可解释时保持优先。</summary>
+        [TestMethod]
+        public void Decode_StrictUtf8Source_IsPreferred()
+        {
+            byte[] bytes = new UTF8Encoding(false, true).GetBytes(".Caption = \"采购订单\"");
+
+            SourceTextDecodeResult result = new SourceTextDecoder().Decode(bytes);
+
+            Assert.AreEqual(".Caption = \"采购订单\"", result.Text);
+            Assert.AreEqual("UTF-8", result.EncodingName);
+            Assert.IsTrue(result.IsReliable);
+        }
+
+        /// <summary>XMZADD 20260911 验证合法 UTF-8 西文和版权符号不会因 GB18030 也可解码而被错误换码。</summary>
+        [TestMethod]
+        public void Decode_ValidUtf8NonChineseText_IsPreferred()
+        {
+            const string source = "' Résumé © SHB";
+            byte[] bytes = new UTF8Encoding(false, true).GetBytes(source);
+
+            SourceTextDecodeResult result = new SourceTextDecoder().Decode(bytes);
+
+            Assert.AreEqual(source, result.Text);
+            Assert.AreEqual("UTF-8", result.EncodingName);
+            Assert.IsTrue(result.IsReliable);
+        }
+
+        /// <summary>XMZADD 20260911 验证字节同时可被两种编码解释时优先选择可读中文而非西里尔乱码。</summary>
+        [TestMethod]
+        public void Decode_AmbiguousGb18030Chinese_UsesQualityScore()
+        {
+            byte[] bytes = Encoding.GetEncoding("GB18030").GetBytes("一");
+
+            SourceTextDecodeResult result = new SourceTextDecoder().Decode(bytes);
+
+            Assert.AreEqual("一", result.Text);
+            Assert.AreEqual("GB18030", result.EncodingName);
+            Assert.IsTrue(result.IsReliable);
+        }
+
+        /// <summary>XMZADD 20260911 验证 GB18030 老源码按确定性编码读取并保留业务中文。</summary>
+        [TestMethod]
+        public void Decode_Gb18030Source_PreservesChineseCaption()
+        {
+            byte[] bytes = Encoding.GetEncoding("GB18030").GetBytes(
+                ".Cols(\"Owner_Company_ID\").Caption = \"货主公司ID\"");
+
+            SourceTextDecodeResult result = new SourceTextDecoder().Decode(bytes);
+
+            StringAssert.Contains(result.Text, "货主公司ID");
+            Assert.AreEqual("GB18030", result.EncodingName);
+            Assert.IsTrue(result.IsReliable);
+        }
+
+        /// <summary>XMZADD 20260911 验证替换字符和可逆的典型二次转码片段分别触发乱码门禁。</summary>
+        [DataTestMethod]
+        [DataRow("\uFFFD")]
+        [DataRow("涓枃")]
+        [DataRow("涓氬姟")]
+        [DataRow("鏄惁")]
+        [DataRow("\u95B2\u56EA\u5598\u7481\u3220\u5D1F")]
+        [DataRow("\u9352\u6D98\u7F13\u93C3\u5815\u68FF")]
+        [DataRow("\u6D60\u64B3\u504D\u9351\u54C4\u53C6\u6434?")]
+        [DataRow("\u7490\u3220\u59DF\u5A34\u4F79\u6309\u7490?")]
+        [DataRow("\u9422\u71B6\u9A87\u9352\u5815??")]
+        public void Decode_TypicalMojibake_IsMarkedUnreliable(string mojibake)
+        {
+            string text = ".Caption = \"" + mojibake + "\"";
+            byte[] bytes = new UTF8Encoding(false, true).GetBytes(text);
+
+            SourceTextDecodeResult result = new SourceTextDecoder().Decode(bytes);
+
+            Assert.IsFalse(result.IsReliable);
+            Assert.IsTrue(result.HasMojibake);
+        }
+
+        /// <summary>XMZADD 20260911 验证合法罕见汉字和常见业务词不会被可逆乱码门禁误伤。</summary>
+        [DataTestMethod]
+        [DataRow("缂丝工艺")]
+        [DataRow("采购订单")]
+        [DataRow("创建时间")]
+        [DataRow("财务流水账")]
+        [DataRow("生产制造")]
+        public void Decode_LegitimateBusinessChinese_RemainsReliable(string chineseText)
+        {
+            byte[] bytes = new UTF8Encoding(false, true).GetBytes(".Caption = \"" + chineseText + "\"");
+
+            SourceTextDecodeResult result = new SourceTextDecoder().Decode(bytes);
+
+            Assert.IsTrue(result.IsReliable);
+            Assert.IsFalse(result.HasMojibake);
+        }
+
+        /// <summary>XMZADD 20260911 验证带字节序标记的 UTF-16 老源码也能确定性读取。</summary>
+        [DataTestMethod]
+        [DataRow(false, "UTF-16 LE BOM")]
+        [DataRow(true, "UTF-16 BE BOM")]
+        public void Decode_Utf16BomSource_PreservesChineseCaption(bool bigEndian, string expectedEncoding)
+        {
+            var encoding = new UnicodeEncoding(bigEndian, true, true);
+            string source = ".Caption = \"操作记录创建时间\"";
+            byte[] bytes = encoding.GetBytes(source);
+            byte[] preamble = encoding.GetPreamble();
+            var sourceBytes = new byte[preamble.Length + bytes.Length];
+            Buffer.BlockCopy(preamble, 0, sourceBytes, 0, preamble.Length);
+            Buffer.BlockCopy(bytes, 0, sourceBytes, preamble.Length, bytes.Length);
+
+            SourceTextDecodeResult result = new SourceTextDecoder().Decode(sourceBytes);
+
+            Assert.AreEqual(source, result.Text);
+            Assert.AreEqual(expectedEncoding, result.EncodingName);
+            Assert.IsTrue(result.IsReliable);
+        }
+
+        /// <summary>XMZADD 20260911 验证无法完整解码的截断字节不会被系统默认代码页静默接收。</summary>
+        [TestMethod]
+        public void Decode_InvalidBytes_ReturnsUnreliableResult()
+        {
+            SourceTextDecodeResult result = new SourceTextDecoder().Decode(new byte[] { 0x81 });
+
+            Assert.AreEqual(string.Empty, result.Text);
+            Assert.AreEqual("Unknown", result.EncodingName);
+            Assert.IsFalse(result.IsReliable);
+        }
+
+        /// <summary>XMZADD 20260911 验证分析器通过 GB18030 解码器提取老源码中的准确业务中文。</summary>
+        [TestMethod]
+        public void Analyze_Gb18030Source_PreservesChineseNameCandidate()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-gb-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "Warehouse", "OwnerEntity.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            string source = "''' <summary>货主公司</summary>\r\n" +
+                "Public Class Kis_T_OWNER_COMPANY\r\nEnd Class\r\n";
+            File.WriteAllBytes(file, Encoding.GetEncoding("GB18030").GetBytes(source));
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence item = FindEvidence(evidence, "T_OWNER_COMPANY", null, "KisEntityClass");
+
+                Assert.IsNotNull(item);
+                Assert.AreEqual("货主公司", item.ChineseNameCandidate);
+                Assert.AreEqual("EOS业务源码", item.Evidence.SourceType);
+                Assert.AreEqual(SourceEvidenceStrength.Authoritative, item.Strength);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证典型错码只保留物理映射和冲突记录，不形成中文名称候选。</summary>
+        [TestMethod]
+        public void Analyze_MojibakeSource_DoesNotPublishChineseNameCandidate()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-bad-text-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "Purchase", "BadEntity.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            string source = "''' <summary>\u93C4\u9359\u7F02</summary>\r\n" +
+                "Public Class Kis_T_BAD_TEXT\r\nEnd Class\r\n";
+            File.WriteAllBytes(file, new UTF8Encoding(false, true).GetBytes(source));
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence mapping = FindEvidence(evidence, "T_BAD_TEXT", null, "KisEntityClass");
+                SourceEvidence warning = FindEvidence(evidence, null, null, "SourceEncodingUnreliable");
+
+                Assert.IsNotNull(mapping);
+                Assert.IsNull(mapping.ChineseNameCandidate);
+                Assert.AreEqual(SourceEvidenceStrength.NamingOnly, mapping.Strength);
+                Assert.IsNotNull(warning);
+                Assert.AreEqual(SourceEvidenceStrength.NamingOnly, warning.Strength);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证乱码文件中的界面标题和枚举注释都只能留下审计记录。</summary>
+        [TestMethod]
+        public void Analyze_MojibakeCaptionAndEnum_AreRemovedFromCandidates()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-bad-caption-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "Purchase", "BadCaption.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            string source =
+                "Dim order As New t_BAD_CAPTION\r\n" +
+                "value = order.f_Status\r\n" +
+                "fg.Cols(\"Status\").Caption = \"涓氬姟\"\r\n" +
+                "Public Enum BadStatus\r\n" +
+                "    ' 涓氬姟\r\n" +
+                "    Active = 1\r\n" +
+                "End Enum\r\n";
+            File.WriteAllBytes(file, new UTF8Encoding(false, true).GetBytes(source));
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence caption = FindEvidence(evidence, "BAD_CAPTION", "Status", "GridColumnCaption");
+                SourceEvidence enumItem = FindEvidence(evidence, null, null, "EnumMember");
+
+                Assert.IsNotNull(caption);
+                Assert.IsNull(caption.ChineseNameCandidate);
+                Assert.AreEqual(SourceEvidenceStrength.NamingOnly, caption.Strength);
+                Assert.AreEqual("EOS源码（编码不可靠）", caption.Evidence.SourceType);
+                Assert.IsNotNull(enumItem);
+                Assert.IsNull(enumItem.EnumChineseName);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证日志和备份目录中的历史源码不会参与业务字典推断。</summary>
+        [TestMethod]
+        public void Analyze_LogAndBackupDirectories_AreExcluded()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-ignore-" + Guid.NewGuid().ToString("N"));
+            string[] directories = { "logs", "log", "backup", "temp", "tmp", "history" };
+            for (int index = 0; index < directories.Length; index++)
+            {
+                string file = Path.Combine(root, directories[index], "Ignored" + index + ".vb");
+                Directory.CreateDirectory(Path.GetDirectoryName(file));
+                File.WriteAllText(file, "Public Class Kis_T_IGNORED_" + index + "\r\nEnd Class\r\n");
+            }
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                for (int index = 0; index < evidence.Count; index++)
+                {
+                    Assert.IsFalse((evidence[index].ObjectName ?? string.Empty).StartsWith(
+                        "T_IGNORED_", StringComparison.OrdinalIgnoreCase));
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证生成实体只提供权威物理映射，不把机械注释发布为业务中文名。</summary>
+        [TestMethod]
+        public void Analyze_GeneratedEntity_SeparatesPhysicalMappingFromChineseName()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-generated-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "表-类定义", "t_Order.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file,
+                "' 表-类生成代码\r\n" +
+                "''' <summary>机械订单名称</summary>\r\n" +
+                "Public Class t_Order\r\n" +
+                "    Private mTable As String = \"Order\"\r\n" +
+                "    ''' <summary>机械创建时间</summary>\r\n" +
+                "    Public Property f_op_createtime As DateTime\r\n" +
+                "End Class\r\n");
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence table = FindEvidence(evidence, "Order", null, "EntityClassConvention");
+                SourceEvidence field = FindEvidence(evidence, "Order", "op_createtime", "EntityProperty");
+
+                Assert.IsNotNull(table);
+                Assert.IsNotNull(field);
+                Assert.IsNull(table.ChineseNameCandidate);
+                Assert.IsNull(field.ChineseNameCandidate);
+                Assert.AreEqual("EOS生成实体", table.Evidence.SourceType);
+                Assert.AreEqual(SourceEvidenceStrength.Authoritative, table.Strength);
+                Assert.AreEqual(SourceUsageKind.Unknown, table.UsageKind);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证真实 EOS 生成表类的 Imports 和扩展标记仍能隔离机械中文注释。</summary>
+        [TestMethod]
+        public void Analyze_RealGeneratedEntityHeader_IsRecognizedAfterImports()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-real-generated-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "表-类定义", "code_Account_Sheet.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file,
+                "Imports DataControl\r\n" +
+                "Imports System.Data.SqlClient\r\n" +
+                "''' <简介>\r\n" +
+                "''' 表-类生成代码,本文件涉及数据表 Account_Sheet\r\n" +
+                "''' </简介>\r\n" +
+                "''' <summary>V1.4 表Account_Sheet，由生成程序自动生成</summary>\r\n" +
+                "Partial Public Class t_Account_Sheet\r\n" +
+                "    ''' <summary>默认值:(getdate())</summary>\r\n" +
+                "    Public Property f_Account_Sheet_opDate As DateTime\r\n" +
+                "End Class\r\n", Encoding.UTF8);
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence table = FindEvidence(evidence, "Account_Sheet", null, "EntityClassConvention");
+                SourceEvidence field = FindEvidence(evidence, "Account_Sheet", "Account_Sheet_opDate", "EntityProperty");
+
+                Assert.IsNotNull(table);
+                Assert.IsNotNull(field);
+                Assert.AreEqual("EOS生成实体", table.Evidence.SourceType);
+                Assert.IsNull(table.ChineseNameCandidate);
+                Assert.IsNull(field.ChineseNameCandidate);
+                Assert.AreEqual(SourceEvidenceStrength.Authoritative, field.Strength);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证业务代码正文提到生成标记时不会被误判为表类生成文件。</summary>
+        [TestMethod]
+        public void Analyze_GeneratorMarkerInsideBusinessCode_DoesNotChangeFileKind()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-marker-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "Purchase", "BusinessOrder.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file,
+                "''' <summary>业务订单</summary>\r\n" +
+                "Public Class t_BusinessOrder\r\n" +
+                "    Private Const GeneratorNote As String = \"表-类生成代码\"\r\n" +
+                "End Class\r\n");
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence item = FindEvidence(evidence, "BusinessOrder", null, "EntityClassConvention");
+
+                Assert.IsNotNull(item);
+                Assert.AreEqual("业务订单", item.ChineseNameCandidate);
+                Assert.AreEqual("EOS业务源码", item.Evidence.SourceType);
+                Assert.AreEqual(SourceEvidenceStrength.Authoritative, item.Strength);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证通用自动生成源码只作为参考上下文而不冒充直接业务证据。</summary>
+        [TestMethod]
+        public void Analyze_AutoGeneratedReport_IsContextualEvidence()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-auto-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "Reports", "GeneratedReport.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file,
+                "' <auto-generated>\r\n" +
+                "''' <summary>订单自动报表</summary>\r\n" +
+                "Public Class t_GeneratedReport\r\n" +
+                "End Class\r\n");
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence item = FindEvidence(evidence, "GeneratedReport", null, "EntityClassConvention");
+
+                Assert.IsNotNull(item);
+                Assert.AreEqual("订单自动报表", item.ChineseNameCandidate);
+                Assert.AreEqual("EOS自动生成源码", item.Evidence.SourceType);
+                Assert.AreEqual(SourceEvidenceStrength.Contextual, item.Strength);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证 Designer 标题保持参考强度，而普通业务代码标题属于直接业务证据。</summary>
+        [TestMethod]
+        public void Analyze_DesignerAndBusinessCaptions_HaveDifferentStrength()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-strength-" + Guid.NewGuid().ToString("N"));
+            string designerFile = Path.Combine(root, "ERP", "Sales", "Order.Designer.vb");
+            string businessFile = Path.Combine(root, "ERP", "Sales", "OrderService.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(designerFile));
+            File.WriteAllText(designerFile,
+                "Dim designerOrder As New t_DESIGNER_ORDER\r\n" +
+                "value = designerOrder.f_Owner_Company_ID\r\n" +
+                "fg.Cols(\"Owner_Company_ID\").Caption = \"货主公司\"\r\n");
+            File.WriteAllText(businessFile,
+                "Dim businessOrder As New t_BUSINESS_ORDER\r\n" +
+                "value = businessOrder.f_Owner_Company_ID\r\n" +
+                "fg.Cols(\"Owner_Company_ID\").Caption = \"货主公司\"\r\n");
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence designer = FindEvidence(evidence, "DESIGNER_ORDER", "Owner_Company_ID", "GridColumnCaption");
+                SourceEvidence business = FindEvidence(evidence, "BUSINESS_ORDER", "Owner_Company_ID", "GridColumnCaption");
+
+                Assert.IsNotNull(designer);
+                Assert.IsNotNull(business);
+                Assert.AreEqual("EOS设计器", designer.Evidence.SourceType);
+                Assert.AreEqual(SourceEvidenceStrength.Contextual, designer.Strength);
+                Assert.AreEqual(SourceUsageKind.Display, designer.UsageKind);
+                Assert.AreEqual("EOS业务源码", business.Evidence.SourceType);
+                Assert.AreEqual(SourceEvidenceStrength.DirectBusinessCode, business.Strength);
+                Assert.AreEqual(SourceUsageKind.Display, business.UsageKind);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证实体赋值方向被标记为写入或读取而不依赖目录名称猜测。</summary>
+        [TestMethod]
+        public void Analyze_EntityAssignments_ClassifyReadAndWriteUsage()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-usage-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "Sales", "OrderService.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file,
+                "Dim order As New t_Order\r\n" +
+                "order.f_Write_Field = sourceValue\r\n" +
+                "targetValue = order.f_Read_Field\r\n");
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence write = FindEvidence(evidence, "Order", "Write_Field", "EntityFieldAssignment");
+                SourceEvidence read = FindEvidence(evidence, "Order", "Read_Field", "EntityFieldAssignment");
+
+                Assert.IsNotNull(write);
+                Assert.IsNotNull(read);
+                Assert.AreEqual(SourceUsageKind.Write, write.UsageKind);
+                Assert.AreEqual(SourceUsageKind.Read, read.UsageKind);
+                Assert.AreEqual(SourceEvidenceStrength.DirectBusinessCode, write.Strength);
+                Assert.AreEqual(SourceEvidenceStrength.DirectBusinessCode, read.Strength);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证 INSERT SELECT 同行中目标表字段为写入而来源表字段保持读取。</summary>
+        [TestMethod]
+        public void Analyze_InsertSelect_ClassifiesTargetAndSourceDirections()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-sql-direction-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "Warehouse", "TransferService.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file,
+                "Dim sql = \"INSERT INTO Target_Table (Target_Field) SELECT S.Source_Field FROM Source_Table S\"\r\n");
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence targetTable = FindEvidence(evidence, "Target_Table", null, "SqlTableUsage");
+                SourceEvidence sourceTable = FindEvidence(evidence, "Source_Table", null, "SqlTableUsage");
+                SourceEvidence targetField = FindEvidence(evidence, "Target_Table", "Target_Field", "SqlFieldUsage");
+                SourceEvidence sourceField = FindEvidence(evidence, "Source_Table", "Source_Field", "SqlFieldUsage");
+
+                Assert.IsNotNull(targetTable);
+                Assert.IsNotNull(sourceTable);
+                Assert.IsNotNull(targetField);
+                Assert.IsNotNull(sourceField);
+                Assert.AreEqual(SourceUsageKind.Write, targetTable.UsageKind);
+                Assert.AreEqual(SourceUsageKind.Read, sourceTable.UsageKind);
+                Assert.AreEqual(SourceUsageKind.Write, targetField.UsageKind);
+                Assert.AreEqual(SourceUsageKind.Read, sourceField.UsageKind);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证同一字段在同一文件先读后写或先写后读时两种用途都不会被去重吞掉。</summary>
+        [DataTestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void Analyze_SameSqlFieldReadAndWrite_PreservesBothDirections(bool writeFirst)
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-both-directions-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "Sales", "OrderService.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            string read = "Dim readSql = \"SELECT Name FROM T_ORDER\"\r\n";
+            string write = "Dim writeSql = \"UPDATE T_ORDER SET Name='New'\"\r\n";
+            File.WriteAllText(file, writeFirst ? write + read : read + write);
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+
+                Assert.IsTrue(ContainsEvidenceUsage(evidence, "T_ORDER", "Name", "SqlFieldUsage", SourceUsageKind.Read));
+                Assert.IsTrue(ContainsEvidenceUsage(evidence, "T_ORDER", "Name", "SqlFieldUsage", SourceUsageKind.Write));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证 DELETE 和 CREATE 的显式及动态目标均被标记为写入。</summary>
+        [TestMethod]
+        public void Analyze_DeleteAndCreateTargets_AreWriteUsage()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-delete-create-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "Warehouse", "ArchiveService.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file,
+                "Public Class t_ArchiveConfig\r\n" +
+                "    Dim deleteSql = \"DELETE FROM Obsolete_Order\"\r\n" +
+                "    Dim createSql = \"CREATE TABLE New_Order (ID int)\"\r\n" +
+                "    Dim dynamicDelete = \"DELETE FROM \" & config.f_Table_Storage_Account\r\n" +
+                "    Dim dynamicCreate = \"CREATE TABLE \" & config.f_Table_Storage_Event\r\n" +
+                "End Class\r\n");
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+
+                Assert.IsTrue(ContainsEvidenceUsage(evidence, "Obsolete_Order", null, "SqlTableUsage", SourceUsageKind.Write));
+                Assert.IsTrue(ContainsEvidenceUsage(evidence, "New_Order", null, "SqlTableUsage", SourceUsageKind.Write));
+                Assert.IsTrue(ContainsEvidenceUsage(evidence, "ArchiveConfig", "Table_Storage_Account", "DynamicTableFieldUsage", SourceUsageKind.Write));
+                Assert.IsTrue(ContainsEvidenceUsage(evidence, "ArchiveConfig", "Table_Storage_Event", "DynamicTableFieldUsage", SourceUsageKind.Write));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260911 验证单次 SQL JOIN 关系只提供上下文参考，不能直接升级为权威关系。</summary>
+        [TestMethod]
+        public void Analyze_SingleSqlJoinRelation_RemainsContextual()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-relation-strength-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "DA", "AcceptanceQuery.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file,
+                "Dim sql = \"SELECT A.Owner_Company_ID FROM DA_Acceptance A " +
+                "JOIN Company C ON A.Owner_Company_ID=C.Company_ID\"\r\n");
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence relation = FindEvidence(evidence, "DA_Acceptance", "Owner_Company_ID", "SqlFieldRelation");
+
+                Assert.IsNotNull(relation);
+                Assert.AreEqual(SourceEvidenceStrength.Contextual, relation.Strength);
+                Assert.AreEqual(SourceUsageKind.Relation, relation.UsageKind);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
         /// <summary>XMZADD 20260903 验证 EOS 表类生成代码可映射真实物理表、字段和对象关系，并排除字段序号枚举。</summary>
         [TestMethod]
         public void Analyze_EosGeneratedEntity_MapsPhysicalMembersAndSkipsOrdinalEnum()
@@ -813,6 +1435,24 @@ namespace SHB.EosDataDictionary.Tests
                 }
             }
             return null;
+        }
+
+        /// <summary>XMZADD 20260911 按对象、字段、规则和用途判断方向证据是否存在。</summary>
+        private static bool ContainsEvidenceUsage(IList<SourceEvidence> evidence, string objectName,
+            string fieldName, string ruleName, SourceUsageKind usageKind)
+        {
+            for (int index = 0; index < evidence.Count; index++)
+            {
+                SourceEvidence item = evidence[index];
+                if (string.Equals(item.ObjectName, objectName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(item.FieldName, fieldName, StringComparison.OrdinalIgnoreCase) &&
+                    item.Evidence != null && string.Equals(item.Evidence.RuleName, ruleName, StringComparison.Ordinal) &&
+                    item.UsageKind == usageKind)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }

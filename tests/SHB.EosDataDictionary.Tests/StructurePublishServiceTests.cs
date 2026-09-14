@@ -785,6 +785,54 @@ namespace SHB.EosDataDictionary.Tests
             }
         }
 
+        /// <summary>XMZADD 20260911 验证来源强度和业务用途经过发布安全净化后仍提供给正式推断链路。</summary>
+        [TestMethod]
+        public async Task Preview_SourceEvidenceClassification_SurvivesSanitization()
+        {
+            var client = new StubGitHubDictionaryClient("100", new[] { "100" });
+            string sourceRoot = CreateSourceRoot();
+            try
+            {
+                var inputEvidence = new List<SourceEvidence>
+                {
+                    new SourceEvidence
+                    {
+                        ObjectName = "T_ORDER",
+                        FieldName = "FNAME",
+                        Strength = SourceEvidenceStrength.DirectBusinessCode,
+                        UsageKind = SourceUsageKind.Write,
+                        Evidence = new EvidenceItem
+                        {
+                            SourceType = "EOS业务源码",
+                            SourcePath = Path.Combine(sourceRoot, "Order", "OrderEntity.vb"),
+                            SourceLine = 12,
+                            RuleName = "EntityFieldAssignment",
+                            Explanation = "业务写入订单名称"
+                        }
+                    }
+                };
+                var inference = new CapturingStructureNameInference();
+                var service = new StructurePublishService(
+                    client,
+                    delegate(string scopeKey) { return CreateSnapshot(false); },
+                    delegate(ConnectionProfile profile, CancellationToken cancellationToken) { return CreateSnapshot(true); },
+                    delegate(string root, CancellationToken cancellationToken) { return inputEvidence; },
+                    inference);
+
+                await service.PreviewAsync(CreateRequest(sourceRoot, null), CancellationToken.None);
+
+                Assert.IsNotNull(inference.SourceEvidence);
+                Assert.AreEqual(1, inference.SourceEvidence.Count);
+                Assert.AreEqual(SourceEvidenceStrength.DirectBusinessCode, inference.SourceEvidence[0].Strength);
+                Assert.AreEqual(SourceUsageKind.Write, inference.SourceEvidence[0].UsageKind);
+                Assert.AreEqual("Order/OrderEntity.vb", inference.SourceEvidence[0].Evidence.SourcePath);
+            }
+            finally
+            {
+                Directory.Delete(sourceRoot, true);
+            }
+        }
+
         /// <summary>XMZADD 20260901 验证扫描预览不会创建 Issue，只有确认发布预览后才提交唯一批次。</summary>
         [TestMethod]
         public async Task PreviewThenPublish_CreatesIssueOnlyAfterConfirmation()
@@ -1250,6 +1298,20 @@ namespace SHB.EosDataDictionary.Tests
                     }
                 }
                 return false;
+            }
+        }
+
+        /// <summary>XMZADD 20260911 捕获发布净化后的源码证据以验证正式推断入口的数据契约。</summary>
+        private sealed class CapturingStructureNameInference : IStructureNameInference
+        {
+            public IList<SourceEvidence> SourceEvidence { get; private set; }
+
+            /// <summary>XMZADD 20260911 保存结构发布传入的安全证据，不执行额外名称推断。</summary>
+            public void Enrich(SnapshotData snapshot, IList<SourceEvidence> sourceEvidence,
+                EosKnowledgeBaseTranslationService knowledgeBase, CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                SourceEvidence = sourceEvidence;
             }
         }
 

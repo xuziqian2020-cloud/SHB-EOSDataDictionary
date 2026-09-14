@@ -17,13 +17,14 @@ namespace SHB.EosDataDictionary.Services
         private const long MaxTotalSourceBytes = 256L * 1024L * 1024L;
         private const int MaxEvidenceCount = 250000;
         private const int MaxEvidencePerFile = 10000;
+        private static readonly SourceTextDecoder SourceDecoder = new SourceTextDecoder();
         private static readonly Regex ClassRegex = new Regex(@"^\s*(?:<[^>]+>\s*)*(?:(?:Public|Private|Friend|Protected|Partial|MustInherit|NotInheritable|static|partial|public|private|internal|abstract|sealed)\s+)*(?:Class|class)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)", RegexOptions.Compiled);
         private static readonly Regex TableRegex = new Regex("\\b(?:TableName|mTable)\\s*(?:As\\s+String\\s*)?=\\s*\"(?<name>[^\"]+)\"", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex PropertyRegex = new Regex(@"^\s*(?:Public|Private|Friend|Protected)?\s*(?:Default\s+)?Property\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:\s*\([^)]*\))?\s*(?:As\s+(?:New\s+)?(?<type>[A-Za-z_][A-Za-z0-9_.]*))?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex CSharpPropertyRegex = new Regex(@"^\s*(?:public|private|protected|internal)\s+(?:static\s+)?(?<type>[A-Za-z_][A-Za-z0-9_<>,.\?\[\]]*)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{", RegexOptions.Compiled);
         private static readonly Regex EnumRegex = new Regex(@"^\s*(?:Public|Private|Friend|Protected|public|private|internal|protected)?\s*(?:Enum|enum)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)", RegexOptions.Compiled);
         private static readonly Regex EnumMemberRegex = new Regex(@"^\s*(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:\s*=\s*(?<value>[^,]+))?\s*,?\s*$", RegexOptions.Compiled);
-        private static readonly Regex SqlTableRegex = new Regex(@"\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:\[?[A-Za-z_][A-Za-z0-9_]*\]?\.)?\[?(?<name>[A-Za-z_][A-Za-z0-9_]*)\]?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex SqlTableRegex = new Regex(@"\b(?<operation>DELETE\s+FROM|CREATE\s+TABLE|FROM|JOIN|UPDATE|INTO)\s+(?:\[?[A-Za-z_][A-Za-z0-9_]*\]?\.)?\[?(?<name>[A-Za-z_][A-Za-z0-9_]*)\]?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex DynamicTableFieldRegex = new Regex(@"\bf_(?<name>Table_[A-Za-z0-9_]+)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         /// <summary>XMZADD 20260828 扫描指定源码目录并输出带文件行号的 EOS 证据。</summary>
@@ -41,6 +42,8 @@ namespace SHB.EosDataDictionary.Services
             {
                 result.Add(new SourceEvidence
                 {
+                    Strength = SourceEvidenceStrength.NamingOnly,
+                    UsageKind = SourceUsageKind.Unknown,
                     Evidence = new EvidenceItem
                     {
                         SourceType = "源码目录",
@@ -101,7 +104,7 @@ namespace SHB.EosDataDictionary.Services
             foreach (string file in allFiles)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (IsSupportedFile(file) && !IsIgnoredPath(file))
+                if (IsSupportedFile(file) && !IsIgnoredPath(sourceRoot, file))
                 {
                     var fileInfo = new FileInfo(file);
                     if (fileInfo.Length > MaxSourceFileBytes)
@@ -131,9 +134,16 @@ namespace SHB.EosDataDictionary.Services
             SourceScanBudget scanBudget, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string[] originalLines = ReadLines(file, scanBudget, cancellationToken);
+            SourceTextDecodeResult decodeResult;
+            string[] originalLines = ReadLines(file, scanBudget, cancellationToken, out decodeResult);
             cancellationToken.ThrowIfCancellationRequested();
             string relativePath = MakeRelativePath(sourceRoot, file);
+            SourceFileKind sourceFileKind = GetSourceFileKind(file, originalLines);
+            bool canUseChineseEvidence = decodeResult.IsReliable && !decodeResult.HasMojibake;
+            if (!canUseChineseEvidence)
+            {
+                AddEncodingWarning(result, relativePath, decodeResult, scanBudget);
+            }
             string[] lines = EosBusinessUsageEvidenceExtractor.MaskCSharpBlockComments(relativePath, originalLines);
             string modulePath = GetModulePath(relativePath);
             string currentEntity = null;
@@ -186,19 +196,26 @@ namespace SHB.EosDataDictionary.Services
                     currentEntity = classMatch.Groups["name"].Value;
                     currentTable = null;
                     currentEnum = null;
-                    string chineseNameCandidate = GetAdjacentXmlSummary(pendingXmlSummary, hasPendingXmlSummary, pendingXmlSummaryLine, lineIndex)
+                    string xmlChineseName = GetAdjacentXmlSummary(pendingXmlSummary, hasPendingXmlSummary,
+                        pendingXmlSummaryLine, lineIndex);
+                    string chineseNameCandidate = xmlChineseName
                         ?? GetAdjacentComment(lastChineseComment, lastChineseCommentLine, lineIndex);
+                    bool hasAuthoritativeXmlSummary = !string.IsNullOrWhiteSpace(xmlChineseName);
                     if (currentEntity.StartsWith("t_", StringComparison.OrdinalIgnoreCase))
                     {
                         currentTable = currentEntity.Substring(2);
                         AddEvidence(result, currentTable, null, currentEntity, modulePath, chineseNameCandidate,
-                            relativePath, lineIndex + 1, "EntityClassConvention", "从 EOS t_ 实体类约定匹配数据库对象。", originalLine, scanBudget);
+                            relativePath, lineIndex + 1, "EntityClassConvention", "从 EOS t_ 实体类约定匹配数据库对象。", originalLine,
+                            scanBudget, sourceFileKind, canUseChineseEvidence,
+                            hasAuthoritativeXmlSummary: hasAuthoritativeXmlSummary);
                     }
                     else if (currentEntity.StartsWith("Kis_", StringComparison.OrdinalIgnoreCase))
                     {
                         currentTable = currentEntity.Substring(4);
                         AddEvidence(result, currentTable, null, currentEntity, modulePath, chineseNameCandidate,
-                            relativePath, lineIndex + 1, "KisEntityClass", "从 EOS 实体类名匹配表名。", originalLine, scanBudget);
+                            relativePath, lineIndex + 1, "KisEntityClass", "从 EOS 实体类名匹配表名。", originalLine,
+                            scanBudget, sourceFileKind, canUseChineseEvidence,
+                            hasAuthoritativeXmlSummary: hasAuthoritativeXmlSummary);
                     }
                     hasPendingXmlSummary = false;
                     pendingXmlSummary = null;
@@ -210,7 +227,8 @@ namespace SHB.EosDataDictionary.Services
                 {
                     currentTable = tableMatch.Groups["name"].Value;
                     AddEvidence(result, currentTable, null, currentEntity, modulePath, GetAdjacentComment(lastChineseComment, lastChineseCommentLine, lineIndex),
-                        relativePath, lineIndex + 1, "TableNameProperty", "从源码 TableName 映射匹配数据库对象。", originalLine, scanBudget);
+                        relativePath, lineIndex + 1, "TableNameProperty", "从源码 TableName 映射匹配数据库对象。", originalLine,
+                        scanBudget, sourceFileKind, canUseChineseEvidence);
                 }
 
                 Match propertyMatch = PropertyRegex.Match(line);
@@ -229,16 +247,21 @@ namespace SHB.EosDataDictionary.Services
                         // EOS 生成实体的 obj 属性代表对象关联，不应误当成同名数据库字段。
                         AddEvidence(result, currentTable, null, currentEntity, modulePath, null,
                             relativePath, lineIndex + 1, "EntityObjectRelation", "从 EOS 实体对象属性识别代码关联。",
-                            originalLine, scanBudget, null, null, null, propertyTypeName, propertyName,
+                            originalLine, scanBudget, sourceFileKind, canUseChineseEvidence,
+                            null, null, null, propertyTypeName, propertyName,
                             propertyName.Substring(3), propertyTypeName);
                     }
                     else if (!string.IsNullOrWhiteSpace(currentTable))
                     {
-                        string chineseNameCandidate = GetAdjacentXmlSummary(pendingXmlSummary, hasPendingXmlSummary, pendingXmlSummaryLine, lineIndex)
+                        string xmlChineseName = GetAdjacentXmlSummary(pendingXmlSummary, hasPendingXmlSummary,
+                            pendingXmlSummaryLine, lineIndex);
+                        string chineseNameCandidate = xmlChineseName
                             ?? GetAdjacentComment(lastChineseComment, lastChineseCommentLine, lineIndex);
                         AddEvidence(result, currentTable, NormalizeEntityFieldName(propertyName), currentEntity,
                             modulePath, chineseNameCandidate, relativePath, lineIndex + 1, "EntityProperty", "从实体属性匹配数据库字段候选。",
-                            originalLine, scanBudget, null, null, null, propertyTypeName, propertyName);
+                            originalLine, scanBudget, sourceFileKind, canUseChineseEvidence,
+                            null, null, null, propertyTypeName, propertyName,
+                            hasAuthoritativeXmlSummary: !string.IsNullOrWhiteSpace(xmlChineseName));
                     }
                     hasPendingXmlSummary = false;
                     pendingXmlSummary = null;
@@ -292,14 +315,15 @@ namespace SHB.EosDataDictionary.Services
                     {
                         AddEvidence(result, currentTable, null, currentEntity, modulePath, GetAdjacentComment(lastChineseComment, lastChineseCommentLine, lineIndex),
                             relativePath, lineIndex + 1, "EnumMember", "从源码枚举成员和值收集枚举证据。",
-                            originalLine, scanBudget, currentEnum, memberMatch.Groups["name"].Value,
+                            originalLine, scanBudget, sourceFileKind, canUseChineseEvidence,
+                            currentEnum, memberMatch.Groups["name"].Value,
                             memberMatch.Groups["value"].Success ? memberMatch.Groups["value"].Value.Trim() : null);
                     }
                 }
 
                 string upperLine = line.ToUpperInvariant();
-                bool isDynamicTableUsage = upperLine.IndexOf("CREATE TABLE", StringComparison.Ordinal) >= 0 ||
-                                           upperLine.IndexOf("INSERT INTO", StringComparison.Ordinal) >= 0 ||
+                    bool isDynamicTableUsage = upperLine.IndexOf("CREATE TABLE", StringComparison.Ordinal) >= 0 ||
+                                            upperLine.IndexOf("INSERT INTO", StringComparison.Ordinal) >= 0 ||
                                            upperLine.IndexOf(" FROM ", StringComparison.Ordinal) >= 0 ||
                                            upperLine.IndexOf(" JOIN ", StringComparison.Ordinal) >= 0 ||
                                            upperLine.IndexOf("UPDATE ", StringComparison.Ordinal) >= 0 ||
@@ -310,43 +334,58 @@ namespace SHB.EosDataDictionary.Services
                     for (int dynamicIndex = 0; dynamicIndex < dynamicFieldMatches.Count; dynamicIndex++)
                     {
                         string dynamicFieldName = dynamicFieldMatches[dynamicIndex].Groups["name"].Value;
-                        string dynamicExplanation = upperLine.IndexOf("CREATE TABLE", StringComparison.Ordinal) >= 0
-                            ? "字段值作为动态创建表的物理表名。"
-                            : upperLine.IndexOf("INSERT INTO", StringComparison.Ordinal) >= 0
-                                ? "字段值作为业务写入目标表名。"
-                                : "字段值作为业务查询或访问的目标表名。";
+                        bool isDynamicWrite = upperLine.IndexOf("CREATE TABLE", StringComparison.Ordinal) >= 0 ||
+                                              upperLine.IndexOf("INSERT INTO", StringComparison.Ordinal) >= 0 ||
+                                              upperLine.IndexOf("UPDATE ", StringComparison.Ordinal) >= 0 ||
+                                              upperLine.IndexOf("DELETE FROM", StringComparison.Ordinal) >= 0;
+                        string dynamicExplanation = isDynamicWrite
+                            ? "字段值作为动态建表、写入、更新或删除的目标物理表名。"
+                            : "字段值作为业务查询或访问的来源表名。";
                         AddEvidence(result, currentTable, dynamicFieldName, currentEntity, modulePath, null,
-                            relativePath, lineIndex + 1, "DynamicTableFieldUsage", dynamicExplanation, originalLine, scanBudget);
+                            relativePath, lineIndex + 1, "DynamicTableFieldUsage", dynamicExplanation, originalLine,
+                            scanBudget, sourceFileKind, canUseChineseEvidence);
                     }
                 }
 
                 MatchCollection sqlMatches = SqlTableRegex.Matches(line);
                 for (int sqlIndex = 0; sqlIndex < sqlMatches.Count; sqlIndex++)
                 {
-                    string sqlObjectName = sqlMatches[sqlIndex].Groups["name"].Value;
-                    if (sqlObjectsInFile.Add(sqlObjectName))
+                    Match sqlMatch = sqlMatches[sqlIndex];
+                    string sqlObjectName = sqlMatch.Groups["name"].Value;
+                    string operation = sqlMatch.Groups["operation"].Value.ToUpperInvariant();
+                    bool isWriteTarget = operation == "INTO" || operation == "UPDATE" ||
+                                         operation.StartsWith("DELETE", StringComparison.Ordinal) ||
+                                         operation.StartsWith("CREATE", StringComparison.Ordinal);
+                    string usageKey = sqlObjectName + "|" + (isWriteTarget ? "Write" : "Read");
+                    if (sqlObjectsInFile.Add(usageKey))
                     {
                         AddEvidence(result, sqlObjectName, null, null, modulePath, null,
-                            relativePath, lineIndex + 1, "SqlTableUsage", "从 SQL 使用位置补充表所属业务模块。", originalLine, scanBudget);
+                            relativePath, lineIndex + 1, "SqlTableUsage",
+                            isWriteTarget
+                                ? "SQL 新增、更新、删除或建表目标确认该表参与业务写入。"
+                                : "SQL FROM 或 JOIN 来源表确认该表参与业务读取。",
+                            originalLine,
+                            scanBudget, sourceFileKind, canUseChineseEvidence);
                     }
                 }
             }
 
-            if (IsBusinessUsageSourceFile(file))
+            if (IsBusinessUsageSourceFile(file) && sourceFileKind != SourceFileKind.GeneratedEntity)
             {
                 IList<SourceEvidence> businessEvidence = new EosBusinessUsageEvidenceExtractor().Extract(
                     relativePath, modulePath, originalLines);
                 for (int evidenceIndex = 0; evidenceIndex < businessEvidence.Count; evidenceIndex++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    AddExtractedEvidence(result, businessEvidence[evidenceIndex], scanBudget);
+                    AddExtractedEvidence(result, businessEvidence[evidenceIndex], scanBudget,
+                        sourceFileKind, canUseChineseEvidence);
                 }
             }
         }
 
-        /// <summary>XMZADD 20260904 将已去重业务用途证据纳入原有单文件和全局安全数量预算。</summary>
+        /// <summary>XMZADD 20260911 将业务用途证据纳入安全预算并按来源文件统一标记可信度。</summary>
         private static void AddExtractedEvidence(IList<SourceEvidence> result, SourceEvidence evidence,
-            SourceScanBudget scanBudget)
+            SourceScanBudget scanBudget, SourceFileKind sourceFileKind, bool canUseChineseEvidence)
         {
             if (result.Count >= MaxEvidencePerFile)
             {
@@ -356,17 +395,19 @@ namespace SHB.EosDataDictionary.Services
             {
                 throw new InvalidDataException("源码证据数量超过安全上限，已终止本次结构扫描。");
             }
+            PrepareEvidence(evidence, sourceFileKind, canUseChineseEvidence);
             result.Add(evidence);
         }
 
-        /// <summary>XMZADD 20260901 添加单条受限源码证据并阻止单文件异常内容产生无界结果。</summary>
+        /// <summary>XMZADD 20260911 添加单条受限源码证据并隔离生成代码或乱码中的中文候选。</summary>
         private static void AddEvidence(IList<SourceEvidence> result, string objectName, string fieldName,
             string entityName, string modulePath, string chineseName, string file, int line,
             string ruleName, string explanation, string originalText, SourceScanBudget scanBudget,
+            SourceFileKind sourceFileKind, bool canUseChineseEvidence,
             string enumName = null, string enumValue = null,
             string enumRawValue = null, string propertyTypeName = null,
             string propertyName = null, string relationFieldName = null,
-            string relationTargetEntity = null)
+            string relationTargetEntity = null, bool hasAuthoritativeXmlSummary = false)
         {
             if (result.Count >= MaxEvidencePerFile)
             {
@@ -377,16 +418,19 @@ namespace SHB.EosDataDictionary.Services
                 throw new InvalidDataException("源码证据数量超过安全上限，已终止本次结构扫描。");
             }
 
-            result.Add(new SourceEvidence
+            string safeChineseName = canUseChineseEvidence && sourceFileKind != SourceFileKind.GeneratedEntity
+                ? chineseName
+                : null;
+            var evidence = new SourceEvidence
             {
                 ObjectName = objectName,
                 FieldName = fieldName,
                 EntityName = entityName,
                 ModulePath = modulePath,
-                ChineseNameCandidate = chineseName,
+                ChineseNameCandidate = safeChineseName,
                 EnumName = enumName,
                 EnumValue = enumValue,
-                EnumChineseName = chineseName,
+                EnumChineseName = safeChineseName,
                 EnumRawValue = enumRawValue,
                 PropertyTypeName = propertyTypeName,
                 PropertyName = propertyName,
@@ -394,7 +438,7 @@ namespace SHB.EosDataDictionary.Services
                 RelationTargetEntity = relationTargetEntity,
                 Evidence = new EvidenceItem
                 {
-                    SourceType = "EOS源码",
+                    SourceType = GetSourceType(sourceFileKind, canUseChineseEvidence),
                     SourcePath = file,
                     SourceLine = line,
                     RuleName = ruleName,
@@ -402,7 +446,185 @@ namespace SHB.EosDataDictionary.Services
                     OriginalText = originalText,
                     Explanation = explanation
                 }
-            });
+            };
+            evidence.Strength = GetEvidenceStrength(evidence, sourceFileKind, canUseChineseEvidence,
+                hasAuthoritativeXmlSummary);
+            evidence.UsageKind = GetUsageKind(evidence);
+            result.Add(evidence);
+        }
+
+        /// <summary>XMZADD 20260911 为业务用途提取器结果补充来源分级，并清除不可采信的中文候选。</summary>
+        private static void PrepareEvidence(SourceEvidence evidence, SourceFileKind sourceFileKind,
+            bool canUseChineseEvidence)
+        {
+            if (evidence == null)
+            {
+                return;
+            }
+            if (!canUseChineseEvidence || sourceFileKind == SourceFileKind.GeneratedEntity)
+            {
+                evidence.ChineseNameCandidate = null;
+                evidence.EnumChineseName = null;
+            }
+            if (evidence.Evidence != null)
+            {
+                evidence.Evidence.SourceType = GetSourceType(sourceFileKind, canUseChineseEvidence);
+            }
+            evidence.Strength = GetEvidenceStrength(evidence, sourceFileKind, canUseChineseEvidence, false);
+            evidence.UsageKind = GetUsageKind(evidence);
+        }
+
+        /// <summary>XMZADD 20260911 按文件来源和规则确定证据强度，生成代码仅对物理映射保持权威。</summary>
+        private static SourceEvidenceStrength GetEvidenceStrength(SourceEvidence evidence,
+            SourceFileKind sourceFileKind, bool canUseChineseEvidence, bool hasAuthoritativeXmlSummary)
+        {
+            if (!canUseChineseEvidence)
+            {
+                return SourceEvidenceStrength.NamingOnly;
+            }
+            string ruleName = evidence == null || evidence.Evidence == null
+                ? string.Empty
+                : evidence.Evidence.RuleName ?? string.Empty;
+            if (sourceFileKind == SourceFileKind.GeneratedEntity)
+            {
+                return IsPhysicalMappingRule(ruleName)
+                    ? SourceEvidenceStrength.Authoritative
+                    : SourceEvidenceStrength.NamingOnly;
+            }
+            if (sourceFileKind == SourceFileKind.Designer || sourceFileKind == SourceFileKind.Configuration)
+            {
+                return SourceEvidenceStrength.Contextual;
+            }
+            if (sourceFileKind == SourceFileKind.AutoGenerated)
+            {
+                return SourceEvidenceStrength.Contextual;
+            }
+            if (string.Equals(ruleName, "SqlFieldRelation", StringComparison.Ordinal) ||
+                ruleName.EndsWith("Conflict", StringComparison.Ordinal))
+            {
+                return SourceEvidenceStrength.Contextual;
+            }
+            if (sourceFileKind == SourceFileKind.BusinessCode && hasAuthoritativeXmlSummary)
+            {
+                return SourceEvidenceStrength.Authoritative;
+            }
+            return sourceFileKind == SourceFileKind.BusinessCode
+                ? SourceEvidenceStrength.DirectBusinessCode
+                : SourceEvidenceStrength.NamingOnly;
+        }
+
+        /// <summary>XMZADD 20260911 识别生成实体能够直接证明的表、字段、属性和对象关联规则。</summary>
+        private static bool IsPhysicalMappingRule(string ruleName)
+        {
+            return string.Equals(ruleName, "EntityClassConvention", StringComparison.Ordinal) ||
+                   string.Equals(ruleName, "KisEntityClass", StringComparison.Ordinal) ||
+                   string.Equals(ruleName, "TableNameProperty", StringComparison.Ordinal) ||
+                   string.Equals(ruleName, "EntityProperty", StringComparison.Ordinal) ||
+                   string.Equals(ruleName, "EntityObjectRelation", StringComparison.Ordinal);
+        }
+
+        /// <summary>XMZADD 20260911 从证据规则和明确语句方向标记读写、展示、关系或枚举用途。</summary>
+        private static SourceUsageKind GetUsageKind(SourceEvidence evidence)
+        {
+            if (evidence == null || evidence.Evidence == null)
+            {
+                return SourceUsageKind.Unknown;
+            }
+            if (evidence.UsageKind != SourceUsageKind.Unknown)
+            {
+                return evidence.UsageKind;
+            }
+            string ruleName = evidence.Evidence.RuleName ?? string.Empty;
+            if (ruleName.IndexOf("Caption", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                string.Equals(ruleName, "SqlColumnAlias", StringComparison.Ordinal) ||
+                string.Equals(ruleName, "SqlDerivedColumnAlias", StringComparison.Ordinal))
+            {
+                return SourceUsageKind.Display;
+            }
+            if (ruleName.IndexOf("Relation", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return SourceUsageKind.Relation;
+            }
+            if (ruleName.IndexOf("Enum", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return SourceUsageKind.Enumeration;
+            }
+
+            string explanation = evidence.Evidence.Explanation ?? string.Empty;
+            if (string.Equals(ruleName, "EntityFieldAssignment", StringComparison.Ordinal))
+            {
+                if (explanation.IndexOf("写入", StringComparison.Ordinal) >= 0)
+                {
+                    return SourceUsageKind.Write;
+                }
+                if (explanation.IndexOf("读取", StringComparison.Ordinal) >= 0)
+                {
+                    return SourceUsageKind.Read;
+                }
+            }
+            if (string.Equals(ruleName, "SqlFieldUsage", StringComparison.Ordinal) ||
+                string.Equals(ruleName, "SqlTableUsage", StringComparison.Ordinal) ||
+                string.Equals(ruleName, "DynamicTableFieldUsage", StringComparison.Ordinal))
+            {
+                if (explanation.IndexOf("写入", StringComparison.Ordinal) >= 0 ||
+                    explanation.IndexOf("更新", StringComparison.Ordinal) >= 0 ||
+                    explanation.IndexOf("删除", StringComparison.Ordinal) >= 0 ||
+                    explanation.IndexOf("建表", StringComparison.Ordinal) >= 0 ||
+                    explanation.IndexOf("目标列", StringComparison.Ordinal) >= 0 ||
+                    explanation.IndexOf("目标表", StringComparison.Ordinal) >= 0)
+                {
+                    return SourceUsageKind.Write;
+                }
+                return SourceUsageKind.Read;
+            }
+            return SourceUsageKind.Unknown;
+        }
+
+        /// <summary>XMZADD 20260911 返回稳定的来源标签，使后续推断能区分生成、设计器和业务源码。</summary>
+        private static string GetSourceType(SourceFileKind sourceFileKind, bool canUseChineseEvidence)
+        {
+            if (!canUseChineseEvidence)
+            {
+                return "EOS源码（编码不可靠）";
+            }
+            if (sourceFileKind == SourceFileKind.GeneratedEntity)
+            {
+                return "EOS生成实体";
+            }
+            if (sourceFileKind == SourceFileKind.Designer)
+            {
+                return "EOS设计器";
+            }
+            if (sourceFileKind == SourceFileKind.AutoGenerated)
+            {
+                return "EOS自动生成源码";
+            }
+            if (sourceFileKind == SourceFileKind.BusinessCode)
+            {
+                return "EOS业务源码";
+            }
+            return "EOS配置源码";
+        }
+
+        /// <summary>XMZADD 20260911 记录不可可靠解码的文件而不保留乱码正文，供冲突报告解释证据缺失。</summary>
+        private static void AddEncodingWarning(IList<SourceEvidence> result, string relativePath,
+            SourceTextDecodeResult decodeResult, SourceScanBudget scanBudget)
+        {
+            var warning = new SourceEvidence
+            {
+                Strength = SourceEvidenceStrength.NamingOnly,
+                UsageKind = SourceUsageKind.Unknown,
+                Evidence = new EvidenceItem
+                {
+                    SourceType = "EOS源码（编码不可靠）",
+                    SourcePath = relativePath,
+                    SourceLine = 0,
+                    RuleName = "SourceEncodingUnreliable",
+                    Explanation = "源码编码为 " + (decodeResult == null ? "Unknown" : decodeResult.EncodingName) +
+                                  "，存在乱码或无法严格解码，中文内容未进入名称候选。"
+                }
+            };
+            AddExtractedEvidence(result, warning, scanBudget, SourceFileKind.Unknown, false);
         }
 
         /// <summary>XMZADD 20260903 将 EOS 生成属性的 f_ 前缀还原为数据库物理字段名。</summary>
@@ -425,8 +647,9 @@ namespace SHB.EosDataDictionary.Services
             return string.Equals(enumName, "en_" + entityName.Substring(2), StringComparison.OrdinalIgnoreCase);
         }
 
-        /// <summary>XMZADD 20260901 以固定字节上限读取单个源码文件，并在读取期间响应取消和文件增长。</summary>
-        private static string[] ReadLines(string file, SourceScanBudget scanBudget, CancellationToken cancellationToken)
+        /// <summary>XMZADD 20260911 以固定字节上限读取源码并通过确定性解码器返回可审计的编码结论。</summary>
+        private static string[] ReadLines(string file, SourceScanBudget scanBudget,
+            CancellationToken cancellationToken, out SourceTextDecodeResult decodeResult)
         {
             byte[] bytes;
             using (var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
@@ -453,21 +676,8 @@ namespace SHB.EosDataDictionary.Services
                 }
                 bytes = output.ToArray();
             }
-            string[] lines;
-            try
-            {
-                lines = new UTF8Encoding(false, true).GetString(bytes).Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-            }
-            catch (DecoderFallbackException)
-            {
-                lines = Encoding.Default.GetString(bytes).Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-            }
-            // UTF-8 BOM 不属于 VB.NET 语法，必须在首行匹配类声明前移除。
-            if (lines.Length > 0 && !string.IsNullOrEmpty(lines[0]) && lines[0][0] == '\uFEFF')
-            {
-                lines[0] = lines[0].Substring(1);
-            }
-            return lines;
+            decodeResult = SourceDecoder.Decode(bytes);
+            return decodeResult.Text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
         }
 
         private static bool IsSupportedFile(string file)
@@ -487,9 +697,16 @@ namespace SHB.EosDataDictionary.Services
                    string.Equals(extension, ".cs", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool IsIgnoredPath(string file)
+        /// <summary>XMZADD 20260911 排除依赖、构建、日志和备份目录，阻止历史副本污染当前业务证据。</summary>
+        private static bool IsIgnoredPath(string sourceRoot, string file)
         {
-            string normalized = file.Replace('/', '\\');
+            string normalizedRoot = Path.GetFullPath(sourceRoot)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            string normalizedFile = Path.GetFullPath(file);
+            string relativePath = normalizedFile.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
+                ? normalizedFile.Substring(normalizedRoot.Length)
+                : normalizedFile;
+            string normalized = "\\" + relativePath.Replace('/', '\\');
             return normalized.IndexOf("\\bin\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    normalized.IndexOf("\\obj\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    normalized.IndexOf("\\.git\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
@@ -498,7 +715,114 @@ namespace SHB.EosDataDictionary.Services
                    normalized.IndexOf("\\_codex_testdata\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    normalized.IndexOf("\\.vs\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    normalized.IndexOf("\\node_modules\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   normalized.IndexOf("\\logs\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   normalized.IndexOf("\\log\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   normalized.IndexOf("\\backup\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   normalized.IndexOf("\\temp\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   normalized.IndexOf("\\tmp\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   normalized.IndexOf("\\history\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    normalized.IndexOf("\\TestResults\\", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>XMZADD 20260911 根据生成标记、设计器后缀和源码扩展名区分证据来源语境。</summary>
+        private static SourceFileKind GetSourceFileKind(string file, string[] lines)
+        {
+            if (IsGeneratedEntityFile(lines))
+            {
+                return SourceFileKind.GeneratedEntity;
+            }
+            string fileName = Path.GetFileName(file) ?? string.Empty;
+            if (fileName.EndsWith(".Designer.vb", StringComparison.OrdinalIgnoreCase) ||
+                fileName.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase))
+            {
+                return SourceFileKind.Designer;
+            }
+            if (IsAutoGeneratedFile(lines))
+            {
+                return SourceFileKind.AutoGenerated;
+            }
+            string extension = Path.GetExtension(file);
+            if (string.Equals(extension, ".vb", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".cs", StringComparison.OrdinalIgnoreCase))
+            {
+                return SourceFileKind.BusinessCode;
+            }
+            return SourceFileKind.Configuration;
+        }
+
+        /// <summary>XMZADD 20260911 仅检查源码头部的表类生成标记，避免业务正文中的相同文字误判文件性质。</summary>
+        private static bool IsGeneratedEntityFile(string[] lines)
+        {
+            int maximumLineCount = Math.Min(lines == null ? 0 : lines.Length, 40);
+            for (int lineIndex = 0; lineIndex < maximumLineCount; lineIndex++)
+            {
+                string line = lines[lineIndex] ?? string.Empty;
+                if (ClassRegex.IsMatch(line))
+                {
+                    return false;
+                }
+                string comment;
+                if (!TryGetHeaderComment(line, out comment))
+                {
+                    continue;
+                }
+                if (comment.StartsWith("表-类生成代码", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>XMZADD 20260911 识别通用工具生成标记，使自动报表源码只能提供参考上下文。</summary>
+        private static bool IsAutoGeneratedFile(string[] lines)
+        {
+            int maximumLineCount = Math.Min(lines == null ? 0 : lines.Length, 40);
+            for (int lineIndex = 0; lineIndex < maximumLineCount; lineIndex++)
+            {
+                string line = lines[lineIndex] ?? string.Empty;
+                if (ClassRegex.IsMatch(line))
+                {
+                    return false;
+                }
+                string comment;
+                if (!TryGetHeaderComment(line, out comment))
+                {
+                    continue;
+                }
+                string normalized = comment.Replace("-", string.Empty).Replace("_", string.Empty);
+                if (normalized.IndexOf("<autogenerated>", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    normalized.IndexOf("autogenerated", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    comment.IndexOf("此代码由工具生成", StringComparison.Ordinal) >= 0 ||
+                    comment.IndexOf("自动生成的代码", StringComparison.Ordinal) >= 0)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>XMZADD 20260911 读取文件开头的 VB、C# 单行或块注释正文以限制生成标记作用域。</summary>
+        private static bool TryGetHeaderComment(string line, out string comment)
+        {
+            string value = (line ?? string.Empty).Trim();
+            comment = null;
+            if (value.StartsWith("'", StringComparison.Ordinal))
+            {
+                comment = value.TrimStart('\'').Trim();
+                return true;
+            }
+            if (value.StartsWith("//", StringComparison.Ordinal))
+            {
+                comment = value.Substring(2).Trim();
+                return true;
+            }
+            if (value.StartsWith("/*", StringComparison.Ordinal) || value.StartsWith("*", StringComparison.Ordinal))
+            {
+                comment = value.Trim(' ', '/', '*').Trim();
+                return true;
+            }
+            return false;
         }
 
         /// <summary>XMZADD 20260901 在线程间共享源码实际读取字节和证据数量，限制并行扫描的总资源占用。</summary>
@@ -506,6 +830,17 @@ namespace SHB.EosDataDictionary.Services
         {
             public long TotalBytes;
             public int EvidenceCount;
+        }
+
+        /// <summary>XMZADD 20260911 定义源码文件对业务含义的证明语境。</summary>
+        private enum SourceFileKind
+        {
+            Unknown = 0,
+            GeneratedEntity = 1,
+            Designer = 2,
+            BusinessCode = 3,
+            Configuration = 4,
+            AutoGenerated = 5
         }
 
         private static string ExtractChineseComment(string line)
@@ -675,7 +1010,27 @@ namespace SHB.EosDataDictionary.Services
         }
     }
 
-    /// <summary>XMZADD 20260828 表示源码分析器发现的一条 EOS 映射证据。</summary>
+    /// <summary>XMZADD 20260911 表示源码证据可支持业务名称或物理映射的强度。</summary>
+    public enum SourceEvidenceStrength
+    {
+        NamingOnly = 0,
+        Contextual = 1,
+        DirectBusinessCode = 2,
+        Authoritative = 3
+    }
+
+    /// <summary>XMZADD 20260911 表示业务源码中表或字段被明确用于何种操作。</summary>
+    public enum SourceUsageKind
+    {
+        Unknown = 0,
+        Read = 1,
+        Write = 2,
+        Display = 3,
+        Relation = 4,
+        Enumeration = 5
+    }
+
+    /// <summary>XMZADD 20260911 表示源码分析器发现的一条 EOS 映射、名称或业务用途证据。</summary>
     public sealed class SourceEvidence
     {
         public string ObjectName { get; set; }
@@ -694,6 +1049,8 @@ namespace SHB.EosDataDictionary.Services
         public string RelationTargetObjectName { get; set; }
         public string RelationTargetFieldName { get; set; }
         public string BusinessIdentifierCandidate { get; set; }
+        public SourceEvidenceStrength Strength { get; set; }
+        public SourceUsageKind UsageKind { get; set; }
         public EvidenceItem Evidence { get; set; }
     }
 }

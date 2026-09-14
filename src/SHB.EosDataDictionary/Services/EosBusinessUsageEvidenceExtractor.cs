@@ -166,7 +166,8 @@ namespace SHB.EosDataDictionary.Services
                     AddEvidence(result, deduplicationKeys, tableName, fieldName, "t_" + tableName,
                         modulePath, null, candidate, sourcePath, lineIndex + 1, "EntityFieldAssignment",
                         match.Value, GetOriginalLine(originalLines, lineIndex + 1),
-                        "实体变量赋值确认该字段在实际业务代码中被写入。");
+                        "实体变量赋值确认该字段在实际业务代码中被写入。",
+                        usageKind: SourceUsageKind.Write);
                 }
 
                 MatchCollection reverseMatches = ReverseEntityAssignmentRegex.Matches(line);
@@ -185,7 +186,8 @@ namespace SHB.EosDataDictionary.Services
                     AddEvidence(result, deduplicationKeys, tableName, fieldName, "t_" + tableName,
                         modulePath, null, candidate, sourcePath, lineIndex + 1, "EntityFieldAssignment",
                         match.Value, GetOriginalLine(originalLines, lineIndex + 1),
-                        "实体变量反向赋值确认该字段在实际业务代码中被读取。");
+                        "实体变量反向赋值确认该字段在实际业务代码中被读取。",
+                        usageKind: SourceUsageKind.Read);
                 }
             }
         }
@@ -257,7 +259,7 @@ namespace SHB.EosDataDictionary.Services
             return result;
         }
 
-        /// <summary>XMZADD 20260904 解析单个受限 SQL 窗口并发布字段使用及等值关联的双向证据。</summary>
+        /// <summary>XMZADD 20260911 解析单个受限 SQL 窗口并区分目标写入、来源读取及等值关联证据。</summary>
         private static void ExtractSqlBlock(string sourcePath, string modulePath, string[] lines,
             SqlBlock block, IDictionary<string, HashSet<string>> fieldOwners,
             IList<SourceEvidence> result, ISet<string> deduplicationKeys)
@@ -271,6 +273,11 @@ namespace SHB.EosDataDictionary.Services
             {
                 return;
             }
+
+            // 写目标必须先于通用字段引用进入去重集合，避免 UPDATE 左值被同一语句中的读取证据覆盖。
+            ExtractInsertFields(sourcePath, modulePath, lines, block, fieldOwners, result, deduplicationKeys);
+            ExtractUpdateFields(sourcePath, modulePath, lines, block, aliases, fieldOwners,
+                result, deduplicationKeys);
 
             MatchCollection fieldMatches = QualifiedFieldRegex.Matches(block.Text);
             for (int matchIndex = 0; matchIndex < fieldMatches.Count; matchIndex++)
@@ -287,7 +294,8 @@ namespace SHB.EosDataDictionary.Services
                 int sourceLine = GetSourceLine(block, match.Groups["field"].Index);
                 AddEvidence(result, deduplicationKeys, tableName, fieldName, null, modulePath,
                     null, fieldName, sourcePath, sourceLine, "SqlFieldUsage", match.Value,
-                    GetOriginalLine(lines, sourceLine), "SQL 查询或写入语句确认该物理字段被业务代码使用。");
+                    GetOriginalLine(lines, sourceLine), "SQL 字段引用确认该物理字段参与业务读取。",
+                    usageKind: SourceUsageKind.Read);
             }
 
             MatchCollection relationMatches = SqlRelationRegex.Matches(block.Text);
@@ -309,17 +317,16 @@ namespace SHB.EosDataDictionary.Services
                 AddEvidence(result, deduplicationKeys, leftTable, leftField, null, modulePath,
                     null, leftField, sourcePath, leftSourceLine, "SqlFieldRelation", match.Value,
                     GetOriginalLine(lines, leftSourceLine),
-                    "SQL 等值连接确认两个物理字段之间的业务关系。", rightTable, rightField);
+                    "SQL 等值连接确认两个物理字段之间的业务关系。", rightTable, rightField,
+                    SourceUsageKind.Relation);
                 int rightSourceLine = GetSourceLine(block, match.Groups["rightField"].Index);
                 AddEvidence(result, deduplicationKeys, rightTable, rightField, null, modulePath,
                     null, rightField, sourcePath, rightSourceLine, "SqlFieldRelation", match.Value,
                     GetOriginalLine(lines, rightSourceLine),
-                    "SQL 等值连接确认两个物理字段之间的反向业务关系。", leftTable, leftField);
+                    "SQL 等值连接确认两个物理字段之间的反向业务关系。", leftTable, leftField,
+                    SourceUsageKind.Relation);
             }
 
-            ExtractInsertFields(sourcePath, modulePath, lines, block, fieldOwners, result, deduplicationKeys);
-            ExtractUpdateFields(sourcePath, modulePath, lines, block, aliases, fieldOwners,
-                result, deduplicationKeys);
             if (tables.Count == 1)
             {
                 string onlyTable = GetOnlyValue(tables);
@@ -398,7 +405,8 @@ namespace SHB.EosDataDictionary.Services
                     AddEvidence(result, deduplicationKeys, tableName, fieldName, null, modulePath,
                         null, fieldName, sourcePath, sourceLine, "SqlFieldUsage",
                         columnMatch.Groups["field"].Value,
-                        GetOriginalLine(lines, sourceLine), "INSERT 目标列确认该字段参与业务写入。");
+                        GetOriginalLine(lines, sourceLine), "INSERT 目标列确认该字段参与业务写入。",
+                        usageKind: SourceUsageKind.Write);
                 }
             }
         }
@@ -434,7 +442,8 @@ namespace SHB.EosDataDictionary.Services
                     AddEvidence(result, deduplicationKeys, tableName, fieldName, null, modulePath,
                         null, fieldName, sourcePath, sourceLine, "SqlFieldUsage",
                         fieldMatch.Groups["field"].Value,
-                        GetOriginalLine(lines, sourceLine), "UPDATE 目标列确认该字段参与业务更新。");
+                        GetOriginalLine(lines, sourceLine), "UPDATE 目标列确认该字段参与业务更新。",
+                        usageKind: SourceUsageKind.Write);
                 }
             }
         }
@@ -486,7 +495,8 @@ namespace SHB.EosDataDictionary.Services
                         int sourceLine = GetSourceLine(block, bodyGroup.Index + identifierMatch.Index);
                         AddEvidence(result, deduplicationKeys, tableName, fieldName, null, modulePath,
                             null, fieldName, sourcePath, sourceLine, "SqlFieldUsage", fieldName,
-                            GetOriginalLine(lines, sourceLine), "单表 SQL 子句确认该无别名字段被业务代码使用。");
+                            GetOriginalLine(lines, sourceLine), "单表 SQL 子句确认该无别名字段被业务代码读取。",
+                            usageKind: SourceUsageKind.Read);
                     }
                 }
             }
@@ -746,27 +756,30 @@ namespace SHB.EosDataDictionary.Services
                 // 无表名界面标题只有在唯一归属时才能提升为中文字段名，避免多表同名字段互相污染。
                 AddEvidence(result, deduplicationKeys, GetOnlyValue(owners), fieldName, null,
                     modulePath, caption, fieldName, sourcePath, sourceLine, ruleName, rawValue,
-                    originalText, "同文件 SQL 或实体变量把界面字段唯一归属到该物理表，可作为中文名称候选。");
+                    originalText, "同文件 SQL 或实体变量把界面字段唯一归属到该物理表，可作为中文名称候选。",
+                    usageKind: SourceUsageKind.Display);
                 return;
             }
 
             AddEvidence(result, deduplicationKeys, null, fieldName, null, modulePath, null,
                 fieldName, sourcePath, sourceLine, ruleName + "Conflict", rawValue, originalText,
-                "同名界面字段在同文件关联多张表，仅保留冲突审计且不用于中文命名。");
+                "同名界面字段在同文件关联多张表，仅保留冲突审计且不用于中文命名。",
+                usageKind: SourceUsageKind.Display);
         }
 
-        /// <summary>XMZADD 20260904 按规则、表、字段、目标和候选构造稳定键后添加一条可审计证据。</summary>
+        /// <summary>XMZADD 20260911 按规则、表、字段、目标、候选和读写方向去重可审计证据。</summary>
         private static void AddEvidence(IList<SourceEvidence> result, ISet<string> deduplicationKeys,
             string objectName, string fieldName, string entityName, string modulePath,
             string chineseNameCandidate, string businessIdentifierCandidate, string sourcePath,
             int sourceLine, string ruleName, string rawValue, string originalText, string explanation,
-            string relationTargetObjectName = null, string relationTargetFieldName = null)
+            string relationTargetObjectName = null, string relationTargetFieldName = null,
+            SourceUsageKind usageKind = SourceUsageKind.Unknown)
         {
             string target = (relationTargetObjectName ?? string.Empty) + "." +
                             (relationTargetFieldName ?? string.Empty);
             string candidate = chineseNameCandidate ?? businessIdentifierCandidate ?? string.Empty;
             string key = (ruleName ?? string.Empty) + "|" + (objectName ?? string.Empty) + "|" +
-                         (fieldName ?? string.Empty) + "|" + target + "|" + candidate;
+                         (fieldName ?? string.Empty) + "|" + target + "|" + candidate + "|" + usageKind.ToString();
             // 同一业务语义仅保留最早的可审计位置，确保安全数量预算按去重结果计算。
             if (!deduplicationKeys.Add(key))
             {
@@ -783,6 +796,7 @@ namespace SHB.EosDataDictionary.Services
                 BusinessIdentifierCandidate = businessIdentifierCandidate,
                 RelationTargetObjectName = relationTargetObjectName,
                 RelationTargetFieldName = relationTargetFieldName,
+                UsageKind = usageKind,
                 Evidence = new EvidenceItem
                 {
                     SourceType = "EOS源码",

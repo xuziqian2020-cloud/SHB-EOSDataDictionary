@@ -698,7 +698,7 @@ namespace SHB.EosDataDictionary.Services
             }
         }
 
-        /// <summary>XMZADD 20260901 把源码证据限制在所选根目录内并复制为可公开的相对路径与短摘要。</summary>
+        /// <summary>XMZADD 20260911 把源码证据限制在所选根目录内并保留可公开的分级与用途。</summary>
         private static IList<SourceEvidence> SanitizeSourceEvidence(
             IList<SourceEvidence> source,
             string sourceRoot)
@@ -739,6 +739,8 @@ namespace SHB.EosDataDictionary.Services
                     EnumName = LimitPublicText(item.EnumName, 256),
                     EnumValue = LimitPublicText(item.EnumValue, 256),
                     PropertyTypeName = LimitPublicText(item.PropertyTypeName, 256),
+                    Strength = item.Strength,
+                    UsageKind = item.UsageKind,
                     Evidence = safeEvidence
                 });
             }
