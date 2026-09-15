@@ -10,10 +10,14 @@ namespace SHB.EosDataDictionary.Services
     public sealed class BusinessCodeNameInferenceService
     {
         private const string BusinessUsageRule = "BusinessUsageContext";
+        private const string BusinessEnumerationRule = "BusinessEnumerationContext";
         private const string MissingChineseName = "暂无可靠中文名称";
         private static readonly Regex IdentifierPartRegex = new Regex(
             @"[A-Z]+(?=[A-Z][a-z]|\d|$)|[A-Z]?[a-z]+|\d+",
             RegexOptions.Compiled);
+        private static readonly Regex NamedEnumConstantRegex = new Regex(
+            @"^(?:-?\d+(?:\.\d+)?|&H[0-9A-F]+|0x[0-9A-F]+|True|False)$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         /// <summary>XMZADD 20260904 一次建立源码证据索引并按所属表上下文补全名称，避免逐表重复扫描全部源码证据。</summary>
         public void Apply(SnapshotData snapshot, IList<SourceEvidence> sourceEvidence)
@@ -25,7 +29,14 @@ namespace SHB.EosDataDictionary.Services
 
             var tableEvidence = new Dictionary<string, SourceEvidence>(StringComparer.OrdinalIgnoreCase);
             var fieldEvidence = new Dictionary<string, List<SourceEvidence>>(StringComparer.OrdinalIgnoreCase);
+            var directEnumerationEvidence = new Dictionary<string, List<SourceEvidence>>(
+                StringComparer.OrdinalIgnoreCase);
+            var enumTypeEvidence = new Dictionary<string, SourceEvidence>(StringComparer.OrdinalIgnoreCase);
+            var enumMemberEvidence = new Dictionary<string, List<SourceEvidence>>(
+                StringComparer.OrdinalIgnoreCase);
             BuildEvidenceIndexes(sourceEvidence, tableEvidence, fieldEvidence);
+            BuildEnumerationEvidenceIndexes(sourceEvidence, directEnumerationEvidence,
+                enumTypeEvidence, enumMemberEvidence);
 
             for (int tableIndex = 0; tableIndex < snapshot.Tables.Count; tableIndex++)
             {
@@ -42,7 +53,71 @@ namespace SHB.EosDataDictionary.Services
                     ApplyKnownTableContext(table, entityEvidence);
                 }
                 ApplyFieldContexts(table, entityEvidence, fieldEvidence);
+                ApplyFieldEnumerations(table, directEnumerationEvidence, enumTypeEvidence,
+                    enumMemberEvidence);
             }
+        }
+
+        /// <summary>XMZADD 20260915 一次索引字段直接枚举、属性类型和命名枚举成员以避免逐字段扫描全部源码。</summary>
+        private static void BuildEnumerationEvidenceIndexes(IList<SourceEvidence> sourceEvidence,
+            IDictionary<string, List<SourceEvidence>> directEnumerationEvidence,
+            IDictionary<string, SourceEvidence> enumTypeEvidence,
+            IDictionary<string, List<SourceEvidence>> enumMemberEvidence)
+        {
+            for (int index = 0; index < sourceEvidence.Count; index++)
+            {
+                SourceEvidence evidence = sourceEvidence[index];
+                if (evidence == null || evidence.Evidence == null)
+                {
+                    continue;
+                }
+                string ruleName = evidence.Evidence.RuleName ?? string.Empty;
+                if (string.Equals(ruleName, "EntityProperty", StringComparison.Ordinal) &&
+                    !string.IsNullOrWhiteSpace(evidence.ObjectName) &&
+                    !string.IsNullOrWhiteSpace(evidence.FieldName) &&
+                    !string.IsNullOrWhiteSpace(evidence.PropertyTypeName))
+                {
+                    string fieldKey = MakeFieldKey(evidence.ObjectName, evidence.FieldName);
+                    SourceEvidence existingType;
+                    if (!enumTypeEvidence.TryGetValue(fieldKey, out existingType) ||
+                        evidence.Strength > existingType.Strength)
+                    {
+                        enumTypeEvidence[fieldKey] = evidence;
+                    }
+                }
+
+                if (string.Equals(ruleName, "EnumMember", StringComparison.Ordinal) &&
+                    evidence.Strength >= SourceEvidenceStrength.DirectBusinessCode &&
+                    !string.IsNullOrWhiteSpace(evidence.EnumName))
+                {
+                    AddEnumerationIndexValue(enumMemberEvidence, evidence.EnumName, evidence);
+                    continue;
+                }
+
+                if (evidence.UsageKind == SourceUsageKind.Enumeration &&
+                    evidence.Strength >= SourceEvidenceStrength.DirectBusinessCode &&
+                    !string.IsNullOrWhiteSpace(evidence.ObjectName) &&
+                    !string.IsNullOrWhiteSpace(evidence.FieldName) &&
+                    !string.IsNullOrWhiteSpace(evidence.EnumValue) &&
+                    IsReliableEnumerationCaption(evidence.EnumChineseName))
+                {
+                    AddFieldEvidence(directEnumerationEvidence,
+                        evidence.ObjectName, evidence.FieldName, evidence);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260915 将枚举成员追加到大小写不敏感的类型索引。</summary>
+        private static void AddEnumerationIndexValue(
+            IDictionary<string, List<SourceEvidence>> index, string key, SourceEvidence evidence)
+        {
+            List<SourceEvidence> values;
+            if (!index.TryGetValue(key, out values))
+            {
+                values = new List<SourceEvidence>();
+                index.Add(key, values);
+            }
+            values.Add(evidence);
         }
 
         /// <summary>XMZADD 20260905 一次聚合表字段全部业务证据并解析无表名界面标题，控制全量批处理复杂度。</summary>
@@ -355,6 +430,328 @@ namespace SHB.EosDataDictionary.Services
                     }
                 }
             }
+        }
+
+        /// <summary>XMZADD 20260915 合并字段直接枚举和命名枚举成员且保护人工、数据库及知识库值。</summary>
+        private static void ApplyFieldEnumerations(TableMetadata table,
+            IDictionary<string, List<SourceEvidence>> directEnumerationEvidence,
+            IDictionary<string, SourceEvidence> enumTypeEvidence,
+            IDictionary<string, List<SourceEvidence>> enumMemberEvidence)
+        {
+            if (table.Fields == null)
+            {
+                return;
+            }
+            for (int fieldIndex = 0; fieldIndex < table.Fields.Count; fieldIndex++)
+            {
+                FieldMetadata field = table.Fields[fieldIndex];
+                if (field == null || string.IsNullOrWhiteSpace(field.FieldName))
+                {
+                    continue;
+                }
+
+                string fieldKey = MakeFieldKey(table.ObjectName, field.FieldName);
+                var candidates = new List<SourceEvidence>();
+                List<SourceEvidence> directCandidates;
+                if (directEnumerationEvidence.TryGetValue(fieldKey, out directCandidates))
+                {
+                    for (int candidateIndex = 0; candidateIndex < directCandidates.Count; candidateIndex++)
+                    {
+                        candidates.Add(directCandidates[candidateIndex]);
+                    }
+                }
+
+                string enumName = null;
+                SourceEvidence typeEvidence;
+                if (enumTypeEvidence.TryGetValue(fieldKey, out typeEvidence) &&
+                    !string.IsNullOrWhiteSpace(typeEvidence.PropertyTypeName))
+                {
+                    List<SourceEvidence> members;
+                    if (enumMemberEvidence.TryGetValue(typeEvidence.PropertyTypeName, out members))
+                    {
+                        enumName = typeEvidence.PropertyTypeName;
+                        for (int memberIndex = 0; memberIndex < members.Count; memberIndex++)
+                        {
+                            candidates.Add(members[memberIndex]);
+                        }
+                    }
+                }
+                if (candidates.Count == 0)
+                {
+                    continue;
+                }
+
+                // 快照解码可能得到只读数组，枚举合并前必须复制为独立可写集合。
+                var writableItems = new List<EnumItemMetadata>();
+                if (field.EnumItems != null)
+                {
+                    for (int itemIndex = 0; itemIndex < field.EnumItems.Count; itemIndex++)
+                    {
+                        if (field.EnumItems[itemIndex] != null)
+                        {
+                            writableItems.Add(field.EnumItems[itemIndex]);
+                        }
+                    }
+                }
+                field.EnumItems = writableItems;
+
+                int acceptedCount = 0;
+                for (int candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
+                {
+                    SourceEvidence candidate = candidates[candidateIndex];
+                    string value;
+                    string chineseName;
+                    if (!TryGetEnumerationCandidate(candidate, out value, out chineseName))
+                    {
+                        continue;
+                    }
+                    AddOrMergeEnumerationItem(writableItems, value, chineseName, candidate);
+                    acceptedCount++;
+                }
+                if (acceptedCount == 0)
+                {
+                    continue;
+                }
+
+                bool hasConflict = MarkEnumerationConflicts(
+                    table.SchemaName, table.ObjectName, field.FieldName, writableItems);
+                string publishedEnumName = string.IsNullOrWhiteSpace(enumName)
+                    ? field.FieldName + "业务枚举"
+                    : enumName;
+                if (MetadataEvidencePolicy.CanReplace(
+                        field.EnumName, ConfidenceStatus.CodeEvidence, BusinessEnumerationRule))
+                {
+                    field.EnumName = CreateCodeValue(publishedEnumName, 94, candidates,
+                        "字段枚举由 EOS 业务代码中的常量键值映射确定。",
+                        field.EnumName, true);
+                }
+                if (hasConflict && !IsAuthoritativeValue(field.EnumName))
+                {
+                    field.EnumName.Status = ConfidenceStatus.GuessedConflict;
+                    field.EnumName.Description = "同一枚举值存在多个中文含义，需人工确认。";
+                }
+                writableItems.Sort(CompareEnumerationItems);
+            }
+        }
+
+        /// <summary>XMZADD 20260915 验证源码枚举候选具有直接强度、常量值和可靠中文含义。</summary>
+        private static bool TryGetEnumerationCandidate(SourceEvidence evidence,
+            out string value, out string chineseName)
+        {
+            value = null;
+            chineseName = null;
+            if (evidence == null || evidence.Evidence == null ||
+                evidence.Strength < SourceEvidenceStrength.DirectBusinessCode ||
+                !IsReliableEnumerationCaption(evidence.EnumChineseName))
+            {
+                return false;
+            }
+
+            bool isNamedEnumMember = string.Equals(
+                evidence.Evidence.RuleName, "EnumMember", StringComparison.Ordinal);
+            value = isNamedEnumMember ? evidence.EnumRawValue : evidence.EnumValue;
+            value = (value ?? string.Empty).Trim();
+            chineseName = evidence.EnumChineseName.Trim();
+            if (value.Length == 0)
+            {
+                return false;
+            }
+            if (isNamedEnumMember && !NamedEnumConstantRegex.IsMatch(value))
+            {
+                // 枚举成员表达式可能调用函数或依赖运行时变量，不能当作数据库固定值。
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>XMZADD 20260915 允许枚举标签使用括号限定语同时沿用业务名称的说明句拒绝规则。</summary>
+        private static bool IsReliableEnumerationCaption(string caption)
+        {
+            string value = (caption ?? string.Empty).Trim();
+            if (IdentifierTranslationService.IsReliableChineseName(value))
+            {
+                return true;
+            }
+            string withoutQualifier = value.Replace("(", string.Empty).Replace(")", string.Empty)
+                .Replace("（", string.Empty).Replace("）", string.Empty);
+            return !string.Equals(value, withoutQualifier, StringComparison.Ordinal) &&
+                   IdentifierTranslationService.IsReliableChineseName(withoutQualifier);
+        }
+
+        /// <summary>XMZADD 20260915 按值和中文含义合并枚举证据并避免后出现的候选覆盖先前结论。</summary>
+        private static void AddOrMergeEnumerationItem(List<EnumItemMetadata> items, string value,
+            string chineseName, SourceEvidence source)
+        {
+            for (int itemIndex = 0; itemIndex < items.Count; itemIndex++)
+            {
+                EnumItemMetadata existing = items[itemIndex];
+                if (existing.ChineseName != null &&
+                    string.Equals(existing.Value, value, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(existing.ChineseName.Value, chineseName, StringComparison.Ordinal))
+                {
+                    AppendEnumerationEvidence(existing.ChineseName, source, value);
+                    if (!IsAuthoritativeValue(existing.ChineseName))
+                    {
+                        existing.ChineseName.Status = ConfidenceStatus.CodeEvidence;
+                        existing.ChineseName.ConfidenceScore = Math.Max(
+                            existing.ChineseName.ConfidenceScore, 94);
+                        existing.ChineseName.SourceType = "EOS业务代码";
+                    }
+                    return;
+                }
+            }
+
+            var valueMetadata = new MetadataValue
+            {
+                Value = chineseName,
+                Status = ConfidenceStatus.CodeEvidence,
+                ConfidenceScore = 94,
+                SourceType = "EOS业务代码",
+                SourceSummary = "EOS 业务代码固定枚举值 " + value + "=" + chineseName,
+                Evidence = new List<EvidenceItem>()
+            };
+            AppendEnumerationEvidence(valueMetadata, source, value);
+            items.Add(new EnumItemMetadata { Value = value, ChineseName = valueMetadata });
+        }
+
+        /// <summary>XMZADD 20260915 追加不重复的枚举源码位置并兼容反序列化产生的只读证据集合。</summary>
+        private static void AppendEnumerationEvidence(MetadataValue target, SourceEvidence source,
+            string value)
+        {
+            if (target == null || source == null || source.Evidence == null)
+            {
+                return;
+            }
+            var writableEvidence = new List<EvidenceItem>();
+            if (target.Evidence != null)
+            {
+                for (int index = 0; index < target.Evidence.Count; index++)
+                {
+                    if (target.Evidence[index] != null)
+                    {
+                        writableEvidence.Add(target.Evidence[index]);
+                    }
+                }
+            }
+            EvidenceItem incoming = source.Evidence;
+            for (int index = 0; index < writableEvidence.Count; index++)
+            {
+                EvidenceItem existing = writableEvidence[index];
+                if (string.Equals(existing.SourcePath, incoming.SourcePath,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    existing.SourceLine == incoming.SourceLine &&
+                    string.Equals(existing.RuleName, incoming.RuleName, StringComparison.Ordinal) &&
+                    string.Equals(existing.RawValue, incoming.RawValue, StringComparison.Ordinal))
+                {
+                    target.Evidence = writableEvidence;
+                    return;
+                }
+            }
+            writableEvidence.Add(new EvidenceItem
+            {
+                SourceType = string.IsNullOrWhiteSpace(incoming.SourceType)
+                    ? "EOS业务源码"
+                    : incoming.SourceType,
+                SourcePath = incoming.SourcePath,
+                SourceLine = incoming.SourceLine,
+                RuleName = incoming.RuleName,
+                RawValue = string.IsNullOrWhiteSpace(incoming.RawValue) ? value : incoming.RawValue,
+                OriginalText = incoming.OriginalText,
+                Explanation = incoming.Explanation
+            });
+            target.Evidence = writableEvidence;
+        }
+
+        /// <summary>XMZADD 20260915 按字段稳定键和值检测不同中文含义并仅降级自动候选。</summary>
+        private static bool MarkEnumerationConflicts(string schemaName, string objectName,
+            string fieldName, IList<EnumItemMetadata> items)
+        {
+            var namesByValue = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            for (int itemIndex = 0; itemIndex < items.Count; itemIndex++)
+            {
+                EnumItemMetadata item = items[itemIndex];
+                if (item == null || item.ChineseName == null ||
+                    string.IsNullOrWhiteSpace(item.Value) || string.IsNullOrWhiteSpace(item.ChineseName.Value))
+                {
+                    continue;
+                }
+                string key = BuildEnumItemKey(schemaName, objectName, fieldName, item.Value);
+                HashSet<string> names;
+                if (!namesByValue.TryGetValue(key, out names))
+                {
+                    names = new HashSet<string>(StringComparer.Ordinal);
+                    namesByValue.Add(key, names);
+                }
+                names.Add(item.ChineseName.Value.Trim());
+            }
+
+            bool hasConflict = false;
+            for (int itemIndex = 0; itemIndex < items.Count; itemIndex++)
+            {
+                EnumItemMetadata item = items[itemIndex];
+                if (item == null || item.ChineseName == null || string.IsNullOrWhiteSpace(item.Value))
+                {
+                    continue;
+                }
+                string key = BuildEnumItemKey(schemaName, objectName, fieldName, item.Value);
+                HashSet<string> names;
+                if (!namesByValue.TryGetValue(key, out names) || names.Count <= 1)
+                {
+                    continue;
+                }
+                hasConflict = true;
+                if (!IsAuthoritativeValue(item.ChineseName))
+                {
+                    item.ChineseName.Status = ConfidenceStatus.GuessedConflict;
+                    item.ChineseName.Description = "同一枚举值存在多个中文含义，需人工确认。";
+                    item.ChineseName.SourceSummary = "枚举值 " + item.Value + " 存在多个业务中文候选。";
+                }
+            }
+            return hasConflict;
+        }
+
+        /// <summary>XMZADD 20260915 判断元数据是否由人工、数据库、确认或精确知识来源保护。</summary>
+        private static bool IsAuthoritativeValue(MetadataValue value)
+        {
+            return value != null &&
+                   (value.IsManualOverride || value.IsLocked ||
+                    value.Status == ConfidenceStatus.LocalOverride ||
+                    value.Status == ConfidenceStatus.DatabaseEvidence ||
+                    value.Status == ConfidenceStatus.Confirmed ||
+                    value.Status == ConfidenceStatus.KnowledgeBaseEvidence);
+        }
+
+        /// <summary>XMZADD 20260915 生成跨大小写稳定的表字段枚举值键用于冲突聚合。</summary>
+        private static string BuildEnumItemKey(string schemaName, string objectName,
+            string fieldName, string value)
+        {
+            return string.Concat(schemaName ?? string.Empty, "|", objectName ?? string.Empty, "|",
+                fieldName ?? string.Empty, "|", value ?? string.Empty).ToUpperInvariant();
+        }
+
+        /// <summary>XMZADD 20260915 以值、权威级别和中文含义稳定排序枚举候选便于审阅。</summary>
+        private static int CompareEnumerationItems(EnumItemMetadata left, EnumItemMetadata right)
+        {
+            string leftValue = left == null ? string.Empty : left.Value ?? string.Empty;
+            string rightValue = right == null ? string.Empty : right.Value ?? string.Empty;
+            int valueComparison = string.Compare(leftValue, rightValue, StringComparison.OrdinalIgnoreCase);
+            if (valueComparison != 0)
+            {
+                return valueComparison;
+            }
+            bool leftAuthoritative = left != null && IsAuthoritativeValue(left.ChineseName);
+            bool rightAuthoritative = right != null && IsAuthoritativeValue(right.ChineseName);
+            if (leftAuthoritative != rightAuthoritative)
+            {
+                return leftAuthoritative ? -1 : 1;
+            }
+            string leftName = left == null || left.ChineseName == null
+                ? string.Empty
+                : left.ChineseName.Value ?? string.Empty;
+            string rightName = right == null || right.ChineseName == null
+                ? string.Empty
+                : right.ChineseName.Value ?? string.Empty;
+            return string.Compare(leftName, rightName, StringComparison.Ordinal);
         }
 
         /// <summary>XMZADD 20260905 综合字段完整语法、关系目标和界面中文标题生成可用于安全覆盖的业务候选。</summary>

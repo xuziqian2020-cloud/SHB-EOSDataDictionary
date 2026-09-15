@@ -837,6 +837,182 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsNull(FindEvidence(evidence, "DA_Acceptance", "DynamicCaption", "GridColumnCaption"));
         }
 
+        /// <summary>XMZADD 20260915 验证网格内联 DataMap 的常量键值进入唯一物理字段枚举。</summary>
+        [TestMethod]
+        public void Extract_GridDataMap_ProducesEnumerationItems()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.Status FROM DA_Acceptance A\"",
+                "fg.Cols(\"Status\").DataMap = New Hashtable From {{0, \"未审核\"}, {1, \"已审核\"}}"
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/AcceptanceQuery.vb", "DA", lines);
+
+            AssertEnumerationEvidence(evidence, "DA_Acceptance", "Status",
+                "GridColumnDataMap", "0", "未审核");
+            AssertEnumerationEvidence(evidence, "DA_Acceptance", "Status",
+                "GridColumnDataMap", "1", "已审核");
+        }
+
+        /// <summary>XMZADD 20260915 验证局部常量字典绑定网格列时保留每个枚举项的实际源码位置。</summary>
+        [TestMethod]
+        public void Extract_GridDataMapVariable_ProducesConstantEnumerationItems()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.Status FROM DA_Acceptance A\"",
+                "Dim statusMap As New ListDictionary",
+                "statusMap.Add(0, \"未审核\")",
+                "statusMap.Add(1, \"已审核\")",
+                "fg.Cols(\"Status\").DataMap = statusMap"
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/AcceptanceQuery.vb", "DA", lines);
+
+            SourceEvidence pending = FindEnumerationEvidence(evidence, "DA_Acceptance", "Status",
+                "GridColumnDataMap", "0", "未审核");
+            Assert.IsNotNull(pending);
+            Assert.AreEqual(3, pending.Evidence.SourceLine);
+            AssertEnumerationEvidence(evidence, "DA_Acceptance", "Status",
+                "GridColumnDataMap", "1", "已审核");
+        }
+
+        /// <summary>XMZADD 20260915 验证数据库行动态装载的 DataMap 不会冒充固定业务枚举。</summary>
+        [TestMethod]
+        public void Extract_GridDataMapDynamicEntries_DoesNotProduceEnumerationItems()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.Status FROM DA_Acceptance A\"",
+                "Dim statusMap As New ListDictionary",
+                "statusMap.Add(0, \"未审核\")",
+                "statusMap.Add(row(\"Code\"), row(\"Name\"))",
+                "fg.Cols(\"Status\").DataMap = statusMap"
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/AcceptanceQuery.vb", "DA", lines);
+
+            Assert.AreEqual(0, CountEvidence(evidence, "DA_Acceptance", "Status", "GridColumnDataMap"));
+        }
+
+        /// <summary>XMZADD 20260915 验证同一行先动态后常量的 DataMap 添加不会跳过动态项并误发枚举。</summary>
+        [TestMethod]
+        public void Extract_GridDataMapMixedEntriesOnSameLine_DoesNotProduceEnumerationItems()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.Status FROM DA_Acceptance A\"",
+                "Dim statusMap As New ListDictionary",
+                "statusMap.Add(row(\"Code\"), row(\"Name\")) : statusMap.Add(1, \"已审核\")",
+                "fg.Cols(\"Status\").DataMap = statusMap"
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/AcceptanceQuery.vb", "DA", lines);
+
+            Assert.AreEqual(0, CountEvidence(evidence, "DA_Acceptance", "Status", "GridColumnDataMap"));
+        }
+
+        /// <summary>XMZADD 20260915 验证 SQL 简单 CASE 的常量值与中文结果进入物理字段枚举。</summary>
+        [TestMethod]
+        public void Extract_SqlSimpleCase_ProducesEnumerationItems()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT CASE A.Status WHEN 0 THEN '未审核' WHEN 1 THEN '已审核' END AS 状态 FROM DA_Acceptance A\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/AcceptanceQuery.vb", "DA", lines);
+
+            AssertEnumerationEvidence(evidence, "DA_Acceptance", "Status",
+                "SqlCaseEnum", "0", "未审核");
+            AssertEnumerationEvidence(evidence, "DA_Acceptance", "Status",
+                "SqlCaseEnum", "1", "已审核");
+        }
+
+        /// <summary>XMZADD 20260915 验证 SQL 搜索 CASE 仅在所有分支均为同一字段常量等值判断时生成枚举。</summary>
+        [TestMethod]
+        public void Extract_SqlSearchedCase_ProducesEnumerationItems()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT CASE WHEN A.Status=0 THEN '未审核' WHEN A.Status=1 THEN '已审核' END AS 状态 FROM DA_Acceptance A\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/AcceptanceQuery.vb", "DA", lines);
+
+            AssertEnumerationEvidence(evidence, "DA_Acceptance", "Status",
+                "SqlCaseEnum", "0", "未审核");
+            AssertEnumerationEvidence(evidence, "DA_Acceptance", "Status",
+                "SqlCaseEnum", "1", "已审核");
+        }
+
+        /// <summary>XMZADD 20260915 验证计算字段或动态中文结果的 CASE 只保留派生列审计而不污染字段枚举。</summary>
+        [TestMethod]
+        public void Extract_SqlComputedOrDynamicCase_DoesNotProduceEnumerationItems()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT CASE A.Status + A.Mode WHEN 0 THEN '未审核' END AS 状态 FROM DA_Acceptance A\"",
+                "Dim sql2 = \"SELECT CASE A.Status WHEN 0 THEN @caption END AS 状态 FROM DA_Acceptance A\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/AcceptanceQuery.vb", "DA", lines);
+
+            Assert.AreEqual(0, CountEvidence(evidence, "DA_Acceptance", "Status", "SqlCaseEnum"));
+        }
+
+        /// <summary>XMZADD 20260915 验证实体字段 Select Case 的常量分支和中文返回值形成字段枚举。</summary>
+        [TestMethod]
+        public void Extract_VbSelectCaseEntityField_ProducesEnumerationItems()
+        {
+            string[] lines =
+            {
+                "Dim acceptance As New t_DA_Acceptance",
+                "Select Case CType(acceptance.f_Status, AcceptanceStatus)",
+                "Case 0",
+                "Return \"未审核\"",
+                "Case 1",
+                "Return \"已审核\"",
+                "End Select"
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/AcceptanceStatus.vb", "DA", lines);
+
+            AssertEnumerationEvidence(evidence, "DA_Acceptance", "Status",
+                "VbSelectCaseEnum", "0", "未审核");
+            AssertEnumerationEvidence(evidence, "DA_Acceptance", "Status",
+                "VbSelectCaseEnum", "1", "已审核");
+        }
+
+        /// <summary>XMZADD 20260915 验证行状态流程控制 Select Case 不会被识别为数据库字段枚举。</summary>
+        [TestMethod]
+        public void Extract_VbSelectCaseFlowControl_DoesNotProduceEnumerationItems()
+        {
+            string[] lines =
+            {
+                "Select Case row(\"State\")",
+                "Case \"Insert\"",
+                "SaveRow()",
+                "Case \"Update\"",
+                "UpdateRow()",
+                "End Select"
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/Common/SaveRows.vb", "Common", lines);
+
+            Assert.AreEqual(0, CountRule(evidence, "VbSelectCaseEnum"));
+        }
+
         /// <summary>XMZADD 20260905 验证字段证据准确指向包含该字段的实际物理源码行。</summary>
         private static void AssertEvidenceLocation(IList<SourceEvidence> evidence, string objectName,
             string fieldName, string ruleName, int expectedLine, string expectedOriginalText)
@@ -864,6 +1040,37 @@ namespace SHB.EosDataDictionary.Tests
                 }
             }
             return null;
+        }
+
+        /// <summary>XMZADD 20260915 按表字段、规则和值定位一条枚举证据。</summary>
+        private static SourceEvidence FindEnumerationEvidence(IList<SourceEvidence> evidence,
+            string objectName, string fieldName, string ruleName, string value, string chineseName)
+        {
+            for (int index = 0; index < evidence.Count; index++)
+            {
+                SourceEvidence item = evidence[index];
+                if (string.Equals(item.ObjectName, objectName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(item.FieldName, fieldName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(item.EnumValue, value, StringComparison.Ordinal) &&
+                    string.Equals(item.EnumChineseName, chineseName, StringComparison.Ordinal) &&
+                    item.Evidence != null &&
+                    string.Equals(item.Evidence.RuleName, ruleName, StringComparison.Ordinal))
+                {
+                    return item;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>XMZADD 20260915 断言枚举证据具有可发布的业务强度、用途和值含义。</summary>
+        private static void AssertEnumerationEvidence(IList<SourceEvidence> evidence,
+            string objectName, string fieldName, string ruleName, string value, string chineseName)
+        {
+            SourceEvidence item = FindEnumerationEvidence(
+                evidence, objectName, fieldName, ruleName, value, chineseName);
+            Assert.IsNotNull(item);
+            Assert.AreEqual(SourceEvidenceStrength.DirectBusinessCode, item.Strength);
+            Assert.AreEqual(SourceUsageKind.Enumeration, item.UsageKind);
         }
 
         /// <summary>XMZADD 20260914 验证 SQL 中文别名证据携带物理定位、直接强度和展示用途。</summary>

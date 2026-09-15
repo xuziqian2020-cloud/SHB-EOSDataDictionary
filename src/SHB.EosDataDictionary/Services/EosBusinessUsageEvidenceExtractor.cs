@@ -90,6 +90,44 @@ namespace SHB.EosDataDictionary.Services
         private static readonly Regex ResourceFallbackRegex = new Regex(
             @"GetResourceText\s*\(\s*[^,\r\n]+,\s*(?:""(?<doubleCaption>[^""]*[\u4e00-\u9fff][^""]*)""|'(?<singleCaption>[^']*[\u4e00-\u9fff][^']*)')\s*\)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex DataMapAssignmentRegex = new Regex(
+            @"\.\s*(?:Cols|Columns)\s*\(\s*""(?<field>[^""]+)""\s*\)\s*\.\s*DataMap\s*=\s*(?<source>.+)$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex MapVariableDeclarationRegex = new Regex(
+            @"^\s*Dim\s+(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s+(?:As\s+(?:New\s+)?(?:System\.Collections\.Specialized\.)?(?:ListDictionary|Hashtable|SortedList|Dictionary\s*\([^)]*\))\b|=\s*New\s+(?:System\.Collections\.Specialized\.)?(?:ListDictionary|Hashtable|SortedList|Dictionary\s*\([^)]*\))\b)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex MapAddCallRegex = new Regex(
+            @"\b(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*Add\s*\(",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ConstantMapAddRegex = new Regex(
+            @"\b(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*Add\s*\(\s*(?<value>-?\d+(?:\.\d+)?|True|False|""(?:[^""]|"""")*"")\s*,\s*""(?<caption>(?:[^""]|"""")*)""\s*\)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex InlineMapInitializerRegex = new Regex(
+            @"^\s*New\s+(?:System\.Collections\.Specialized\.)?(?:ListDictionary|Hashtable|SortedList|Dictionary\s*\([^)]*\))\s*(?:\(\s*\))?\s+From\s+(?<items>\{.*\})\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex InlineMapPairRegex = new Regex(
+            @"\{\s*(?<value>-?\d+(?:\.\d+)?|True|False|""(?:[^""]|"""")*"")\s*,\s*""(?<caption>(?:[^""]|"""")*)""\s*\}",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex SqlSimpleCaseRegex = new Regex(
+            @"^\s*CASE\s+(?<fieldRef>(?:(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*))\s+(?:WHEN\s+(?<value>-?\d+(?:\.\d+)?|N?'(?:''|[^'])*')\s+THEN\s+(?<caption>N?'(?:''|[^'])+')\s*)+(?:ELSE\s+N?'(?:''|[^'])*'\s*)?END\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+        private static readonly Regex SqlSearchedCaseRegex = new Regex(
+            @"^\s*CASE\s+(?:WHEN\s+(?<fieldRef>(?:(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*))\s*=\s*(?<value>-?\d+(?:\.\d+)?|N?'(?:''|[^'])*')\s+THEN\s+(?<caption>N?'(?:''|[^'])+')\s*)+(?:ELSE\s+N?'(?:''|[^'])*'\s*)?END\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+        private static readonly Regex VbSelectCaseEntityFieldRegex = new Regex(
+            @"^\s*Select\s+Case\s+(?:CType\s*\(\s*)?(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*f_(?<field>[A-Za-z_][A-Za-z0-9_]*)(?:\s*,\s*[A-Za-z_][A-Za-z0-9_.]*)?\s*\)?\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex VbCaseConstantRegex = new Regex(
+            @"^\s*Case\s+(?<value>-?\d+(?:\.\d+)?|True|False|""(?:[^""]|"""")*"")\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex VbCaseElseRegex = new Regex(
+            @"^\s*Case\s+Else\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex VbReturnCaptionRegex = new Regex(
+            @"^\s*Return\s+""(?<caption>(?:[^""]|"""")+)""\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex VbAssignmentCaptionRegex = new Regex(
+            @"^\s*(?<target>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*""(?<caption>(?:[^""]|"""")+)""\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex IdentifierRegex = new Regex(
             @"\[?(?<identifier>[A-Za-z_][A-Za-z0-9_]*)\]?",
             RegexOptions.Compiled);
@@ -122,6 +160,10 @@ namespace SHB.EosDataDictionary.Services
                     result, deduplicationKeys);
             }
 
+            ExtractDataMapEnumerations(sourcePath, sourceModule, codeLines, lines, fieldOwners,
+                result, deduplicationKeys);
+            ExtractVbSelectCaseEnumerations(sourcePath, sourceModule, codeLines, lines, entityTables,
+                result, deduplicationKeys);
             ExtractCaptions(sourcePath, sourceModule, codeLines, lines, dataColumnFields, fieldOwners,
                 result, deduplicationKeys);
             return result;
@@ -440,10 +482,144 @@ namespace SHB.EosDataDictionary.Services
                     selectDepth, parenthesisDepths);
                 for (int segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
                 {
+                    ExtractSqlCaseEnumeration(sourcePath, modulePath, lines, block, segments[segmentIndex],
+                        sourceContext, fieldOwners, result, deduplicationKeys);
                     ExtractSqlColumnAlias(sourcePath, modulePath, lines, block, segments[segmentIndex],
                         sourceContext, fieldOwners, result, deduplicationKeys);
                 }
             }
+        }
+
+        /// <summary>XMZADD 20260915 仅从唯一物理字段和字面常量组成的 SQL CASE 中提取枚举键值。</summary>
+        private static void ExtractSqlCaseEnumeration(string sourcePath, string modulePath, string[] lines,
+            SqlBlock block, ProjectionSegment segment, SelectSourceContext sourceContext,
+            IDictionary<string, HashSet<string>> fieldOwners, IList<SourceEvidence> result,
+            ISet<string> deduplicationKeys)
+        {
+            string expression;
+            string chineseAlias;
+            int expressionOffset;
+            int aliasOffset;
+            if (!TrySplitChineseSelectAlias(segment.Text, out expression, out chineseAlias,
+                    out expressionOffset, out aliasOffset))
+            {
+                return;
+            }
+
+            Match caseMatch = SqlSimpleCaseRegex.Match(expression);
+            bool isSearchedCase = false;
+            if (!caseMatch.Success)
+            {
+                caseMatch = SqlSearchedCaseRegex.Match(expression);
+                isSearchedCase = true;
+            }
+            if (!caseMatch.Success)
+            {
+                return;
+            }
+
+            CaptureCollection fieldReferences = caseMatch.Groups["fieldRef"].Captures;
+            CaptureCollection values = caseMatch.Groups["value"].Captures;
+            CaptureCollection captions = caseMatch.Groups["caption"].Captures;
+            if (fieldReferences.Count == 0 || values.Count == 0 || values.Count != captions.Count ||
+                (isSearchedCase && fieldReferences.Count != values.Count))
+            {
+                return;
+            }
+
+            string tableName;
+            string fieldName;
+            if (!TryResolveSqlFieldReference(sourceContext, fieldReferences[0].Value,
+                    out tableName, out fieldName))
+            {
+                return;
+            }
+            if (isSearchedCase)
+            {
+                for (int fieldIndex = 1; fieldIndex < fieldReferences.Count; fieldIndex++)
+                {
+                    string otherTable;
+                    string otherField;
+                    if (!TryResolveSqlFieldReference(sourceContext, fieldReferences[fieldIndex].Value,
+                            out otherTable, out otherField) ||
+                        !string.Equals(tableName, otherTable, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(fieldName, otherField, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 搜索 CASE 混用多个字段时，任何单个分支都不足以证明完整字段枚举。
+                        return;
+                    }
+                }
+            }
+
+            var pending = new List<EnumerationSourceItem>();
+            for (int itemIndex = 0; itemIndex < values.Count; itemIndex++)
+            {
+                string value = NormalizeSqlLiteral(values[itemIndex].Value);
+                string caption = NormalizeSqlLiteral(captions[itemIndex].Value);
+                if (string.IsNullOrWhiteSpace(value) || !ContainsChineseCharacter(caption))
+                {
+                    return;
+                }
+                int sourceLine = GetSourceLine(block,
+                    segment.StartIndex + expressionOffset + values[itemIndex].Index);
+                pending.Add(new EnumerationSourceItem(value, caption, sourceLine,
+                    caseMatch.Value, GetOriginalLine(lines, sourceLine)));
+            }
+
+            AddFieldOwner(fieldOwners, fieldName, tableName);
+            for (int itemIndex = 0; itemIndex < pending.Count; itemIndex++)
+            {
+                EnumerationSourceItem item = pending[itemIndex];
+                AddEnumerationEvidence(result, deduplicationKeys, tableName, fieldName, modulePath,
+                    item.Value, item.ChineseName, sourcePath, item.SourceLine, "SqlCaseEnum",
+                    item.RawValue, item.OriginalText,
+                    "SQL CASE 将唯一物理字段的常量值直接映射为中文业务含义。");
+            }
+        }
+
+        /// <summary>XMZADD 20260915 将当前 SELECT 作用域内的直接字段引用解析为唯一物理表字段。</summary>
+        private static bool TryResolveSqlFieldReference(SelectSourceContext sourceContext, string fieldReference,
+            out string tableName, out string fieldName)
+        {
+            tableName = null;
+            fieldName = null;
+            Match fieldMatch = DirectSelectFieldRegex.Match((fieldReference ?? string.Empty).Trim());
+            if (!fieldMatch.Success)
+            {
+                return false;
+            }
+
+            fieldName = NormalizeIdentifier(fieldMatch.Groups["field"].Value);
+            string qualifier = NormalizeIdentifier(fieldMatch.Groups["alias"].Value);
+            if (!string.IsNullOrWhiteSpace(qualifier))
+            {
+                if (sourceContext.AmbiguousAliases.Contains(qualifier) ||
+                    !sourceContext.Aliases.TryGetValue(qualifier, out tableName))
+                {
+                    return false;
+                }
+            }
+            else if (!sourceContext.HasAmbiguousUnqualifiedSource && sourceContext.Tables.Count == 1)
+            {
+                tableName = GetOnlyValue(sourceContext.Tables);
+            }
+            return !string.IsNullOrWhiteSpace(tableName) && !string.IsNullOrWhiteSpace(fieldName);
+        }
+
+        /// <summary>XMZADD 20260915 规范化 SQL 数字或字符串字面量且不接受变量和计算表达式。</summary>
+        private static string NormalizeSqlLiteral(string literal)
+        {
+            string value = (literal ?? string.Empty).Trim();
+            if (value.Length >= 3 && (value[0] == 'N' || value[0] == 'n') && value[1] == '\'' &&
+                value[value.Length - 1] == '\'')
+            {
+                return value.Substring(2, value.Length - 3).Replace("''", "'").Trim();
+            }
+            if (value.Length >= 2 && value[0] == '\'' && value[value.Length - 1] == '\'')
+            {
+                return value.Substring(1, value.Length - 2).Replace("''", "'").Trim();
+            }
+            return value;
         }
 
         /// <summary>XMZADD 20260914 解析一个投影项且只让完整单列表达式形成物理字段命名证据。</summary>
@@ -1262,6 +1438,332 @@ namespace SHB.EosDataDictionary.Services
                    character == '|' || character == '&' || character == '^' || character == '.';
         }
 
+        /// <summary>XMZADD 20260915 仅发布静态常量字典绑定且排除数据库行或变量动态装载的 DataMap。</summary>
+        private static void ExtractDataMapEnumerations(string sourcePath, string modulePath, string[] codeLines,
+            string[] originalLines, IDictionary<string, HashSet<string>> fieldOwners,
+            IList<SourceEvidence> result, ISet<string> deduplicationKeys)
+        {
+            var maps = new Dictionary<string, MapVariableState>(StringComparer.OrdinalIgnoreCase);
+            for (int lineIndex = 0; lineIndex < codeLines.Length; lineIndex++)
+            {
+                string code = GetCodeBeforeTrailingComment(codeLines[lineIndex] ?? string.Empty).Trim();
+                if (code.Length == 0)
+                {
+                    continue;
+                }
+                if (IsVbMemberBoundary(code))
+                {
+                    maps.Clear();
+                    continue;
+                }
+
+                Match declaration = MapVariableDeclarationRegex.Match(code);
+                if (declaration.Success)
+                {
+                    maps[declaration.Groups["variable"].Value] = new MapVariableState();
+                }
+
+                MatchCollection addCalls = MapAddCallRegex.Matches(code);
+                for (int addIndex = 0; addIndex < addCalls.Count; addIndex++)
+                {
+                    string variableName = addCalls[addIndex].Groups["variable"].Value;
+                    MapVariableState state;
+                    if (!maps.TryGetValue(variableName, out state))
+                    {
+                        continue;
+                    }
+                    Match constantAdd = ConstantMapAddRegex.Match(code, addCalls[addIndex].Index);
+                    if (!constantAdd.Success ||
+                        constantAdd.Index != addCalls[addIndex].Index ||
+                        !string.Equals(constantAdd.Groups["variable"].Value, variableName,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 混入数据库行、变量或计算表达式后无法证明字典在运行时的固定键值集合。
+                        state.HasDynamicEntry = true;
+                        continue;
+                    }
+
+                    string value = NormalizeVisualBasicLiteral(constantAdd.Groups["value"].Value);
+                    string caption = NormalizeVisualBasicLiteral(
+                        "\"" + constantAdd.Groups["caption"].Value + "\"");
+                    if (!string.IsNullOrWhiteSpace(value) && ContainsChineseCharacter(caption))
+                    {
+                        state.Items.Add(new EnumerationSourceItem(value, caption, lineIndex + 1,
+                            constantAdd.Value, GetOriginalLine(originalLines, lineIndex + 1)));
+                    }
+                }
+
+                MatchCollection assignments = DataMapAssignmentRegex.Matches(code);
+                for (int assignmentIndex = 0; assignmentIndex < assignments.Count; assignmentIndex++)
+                {
+                    Match assignment = assignments[assignmentIndex];
+                    string fieldName = NormalizeIdentifier(assignment.Groups["field"].Value);
+                    string sourceExpression = assignment.Groups["source"].Value.Trim();
+                    IList<EnumerationSourceItem> items = ParseInlineMapItems(
+                        sourceExpression, lineIndex + 1, GetOriginalLine(originalLines, lineIndex + 1));
+                    if (items == null)
+                    {
+                        MapVariableState state;
+                        if (!IsSimpleIdentifier(sourceExpression) ||
+                            !maps.TryGetValue(sourceExpression, out state) || state.HasDynamicEntry)
+                        {
+                            continue;
+                        }
+                        items = state.Items;
+                    }
+                    AddFieldEnumerationItems(result, deduplicationKeys, fieldOwners, fieldName,
+                        modulePath, sourcePath, "GridColumnDataMap", items,
+                        "网格 DataMap 的静态常量字典把字段值直接映射为中文业务含义。");
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260915 解析 VB 集合初始化器并在存在任何动态元素时拒绝整组枚举。</summary>
+        private static IList<EnumerationSourceItem> ParseInlineMapItems(string expression, int sourceLine,
+            string originalText)
+        {
+            Match initializer = InlineMapInitializerRegex.Match(expression ?? string.Empty);
+            if (!initializer.Success)
+            {
+                return null;
+            }
+
+            string itemText = initializer.Groups["items"].Value;
+            MatchCollection pairs = InlineMapPairRegex.Matches(itemText);
+            string remaining = InlineMapPairRegex.Replace(itemText, string.Empty);
+            for (int characterIndex = 0; characterIndex < remaining.Length; characterIndex++)
+            {
+                char character = remaining[characterIndex];
+                if (!char.IsWhiteSpace(character) && character != '{' && character != '}' && character != ',')
+                {
+                    return new List<EnumerationSourceItem>();
+                }
+            }
+
+            var result = new List<EnumerationSourceItem>();
+            for (int pairIndex = 0; pairIndex < pairs.Count; pairIndex++)
+            {
+                Match pair = pairs[pairIndex];
+                string value = NormalizeVisualBasicLiteral(pair.Groups["value"].Value);
+                string caption = NormalizeVisualBasicLiteral(
+                    "\"" + pair.Groups["caption"].Value + "\"");
+                if (!string.IsNullOrWhiteSpace(value) && ContainsChineseCharacter(caption))
+                {
+                    result.Add(new EnumerationSourceItem(value, caption, sourceLine,
+                        pair.Value, originalText));
+                }
+            }
+            return result;
+        }
+
+        /// <summary>XMZADD 20260915 只在同文件证据把 DataMap 字段唯一归属到一张物理表时发布枚举。</summary>
+        private static void AddFieldEnumerationItems(IList<SourceEvidence> result,
+            ISet<string> deduplicationKeys, IDictionary<string, HashSet<string>> fieldOwners,
+            string fieldName, string modulePath, string sourcePath, string ruleName,
+            IList<EnumerationSourceItem> items, string explanation)
+        {
+            if (items == null || items.Count == 0)
+            {
+                return;
+            }
+            HashSet<string> owners;
+            if (!fieldOwners.TryGetValue(fieldName, out owners) || owners.Count != 1)
+            {
+                return;
+            }
+
+            string tableName = GetOnlyValue(owners);
+            for (int itemIndex = 0; itemIndex < items.Count; itemIndex++)
+            {
+                EnumerationSourceItem item = items[itemIndex];
+                AddEnumerationEvidence(result, deduplicationKeys, tableName, fieldName, modulePath,
+                    item.Value, item.ChineseName, sourcePath, item.SourceLine, ruleName,
+                    item.RawValue, item.OriginalText, explanation);
+            }
+        }
+
+        /// <summary>XMZADD 20260915 从实体字段 Select Case 中提取常量分支及唯一中文返回结果。</summary>
+        private static void ExtractVbSelectCaseEnumerations(string sourcePath, string modulePath,
+            string[] codeLines, string[] originalLines, IDictionary<string, string> entityTables,
+            IList<SourceEvidence> result, ISet<string> deduplicationKeys)
+        {
+            for (int lineIndex = 0; lineIndex < codeLines.Length; lineIndex++)
+            {
+                string selectorLine = GetCodeBeforeTrailingComment(codeLines[lineIndex] ?? string.Empty).Trim();
+                Match selector = VbSelectCaseEntityFieldRegex.Match(selectorLine);
+                if (!selector.Success)
+                {
+                    continue;
+                }
+
+                string tableName;
+                if (!entityTables.TryGetValue(selector.Groups["variable"].Value, out tableName))
+                {
+                    continue;
+                }
+                int endLineIndex = FindVbEndSelect(codeLines, lineIndex + 1);
+                if (endLineIndex < 0)
+                {
+                    continue;
+                }
+
+                IList<EnumerationSourceItem> items = ParseVbSelectCaseItems(
+                    codeLines, originalLines, lineIndex + 1, endLineIndex);
+                if (items == null || items.Count < 2)
+                {
+                    lineIndex = endLineIndex;
+                    continue;
+                }
+
+                string fieldName = NormalizeIdentifier(selector.Groups["field"].Value);
+                for (int itemIndex = 0; itemIndex < items.Count; itemIndex++)
+                {
+                    EnumerationSourceItem item = items[itemIndex];
+                    AddEnumerationEvidence(result, deduplicationKeys, tableName, fieldName, modulePath,
+                        item.Value, item.ChineseName, sourcePath, item.SourceLine, "VbSelectCaseEnum",
+                        item.RawValue, item.OriginalText,
+                        "实体字段 Select Case 的常量分支直接返回同一类中文业务含义。");
+                }
+                lineIndex = endLineIndex;
+            }
+        }
+
+        /// <summary>XMZADD 20260915 在禁止嵌套的有限源码块中定位与当前 Select Case 配对的结束行。</summary>
+        private static int FindVbEndSelect(string[] lines, int startLineIndex)
+        {
+            for (int lineIndex = startLineIndex; lineIndex < lines.Length; lineIndex++)
+            {
+                string code = GetCodeBeforeTrailingComment(lines[lineIndex] ?? string.Empty).Trim();
+                if (code.StartsWith("Select Case", StringComparison.OrdinalIgnoreCase))
+                {
+                    return -1;
+                }
+                if (string.Equals(code, "End Select", StringComparison.OrdinalIgnoreCase))
+                {
+                    return lineIndex;
+                }
+                if (lineIndex - startLineIndex >= 160)
+                {
+                    return -1;
+                }
+            }
+            return -1;
+        }
+
+        /// <summary>XMZADD 20260915 要求每个常量 Case 只有一个中文返回或同目标赋值以排除流程控制分支。</summary>
+        private static IList<EnumerationSourceItem> ParseVbSelectCaseItems(string[] codeLines,
+            string[] originalLines, int startLineIndex, int endLineIndex)
+        {
+            var result = new List<EnumerationSourceItem>();
+            string outputSignature = null;
+            int lineIndex = startLineIndex;
+            while (lineIndex < endLineIndex)
+            {
+                string caseLine = GetCodeBeforeTrailingComment(codeLines[lineIndex] ?? string.Empty).Trim();
+                if (caseLine.Length == 0)
+                {
+                    lineIndex++;
+                    continue;
+                }
+                if (VbCaseElseRegex.IsMatch(caseLine))
+                {
+                    lineIndex = FindNextVbCaseLine(codeLines, lineIndex + 1, endLineIndex);
+                    continue;
+                }
+
+                Match caseMatch = VbCaseConstantRegex.Match(caseLine);
+                if (!caseMatch.Success)
+                {
+                    return null;
+                }
+                int nextCaseLine = FindNextVbCaseLine(codeLines, lineIndex + 1, endLineIndex);
+                int executableCount = 0;
+                string caption = null;
+                string currentSignature = null;
+                string outputLine = null;
+                for (int bodyIndex = lineIndex + 1; bodyIndex < nextCaseLine; bodyIndex++)
+                {
+                    string body = GetCodeBeforeTrailingComment(codeLines[bodyIndex] ?? string.Empty).Trim();
+                    if (body.Length == 0)
+                    {
+                        continue;
+                    }
+                    executableCount++;
+                    outputLine = GetOriginalLine(originalLines, bodyIndex + 1);
+                    Match returnMatch = VbReturnCaptionRegex.Match(body);
+                    if (returnMatch.Success)
+                    {
+                        caption = NormalizeVisualBasicLiteral(
+                            "\"" + returnMatch.Groups["caption"].Value + "\"");
+                        currentSignature = "RETURN";
+                        continue;
+                    }
+                    Match assignmentMatch = VbAssignmentCaptionRegex.Match(body);
+                    if (assignmentMatch.Success)
+                    {
+                        caption = NormalizeVisualBasicLiteral(
+                            "\"" + assignmentMatch.Groups["caption"].Value + "\"");
+                        currentSignature = "ASSIGN:" + assignmentMatch.Groups["target"].Value.ToUpperInvariant();
+                    }
+                }
+
+                if (executableCount != 1 || !ContainsChineseCharacter(caption) ||
+                    (outputSignature != null && !string.Equals(outputSignature, currentSignature,
+                        StringComparison.Ordinal)))
+                {
+                    return null;
+                }
+                outputSignature = currentSignature;
+                string value = NormalizeVisualBasicLiteral(caseMatch.Groups["value"].Value);
+                result.Add(new EnumerationSourceItem(value, caption, lineIndex + 1,
+                    caseLine + " => " + caption,
+                    GetOriginalLine(originalLines, lineIndex + 1) + " | " + outputLine));
+                lineIndex = nextCaseLine;
+            }
+            return result;
+        }
+
+        /// <summary>XMZADD 20260915 定位下一个 Case 或当前 End Select 边界以隔离各分支正文。</summary>
+        private static int FindNextVbCaseLine(string[] lines, int startLineIndex, int endLineIndex)
+        {
+            for (int lineIndex = startLineIndex; lineIndex < endLineIndex; lineIndex++)
+            {
+                string code = GetCodeBeforeTrailingComment(lines[lineIndex] ?? string.Empty).Trim();
+                if (code.StartsWith("Case ", StringComparison.OrdinalIgnoreCase))
+                {
+                    return lineIndex;
+                }
+            }
+            return endLineIndex;
+        }
+
+        /// <summary>XMZADD 20260915 规范化 VB 数字、布尔和字符串字面量且还原双引号转义。</summary>
+        private static string NormalizeVisualBasicLiteral(string literal)
+        {
+            string value = (literal ?? string.Empty).Trim();
+            if (value.Length >= 2 && value[0] == '"' && value[value.Length - 1] == '"')
+            {
+                return value.Substring(1, value.Length - 2).Replace("\"\"", "\"").Trim();
+            }
+            if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                return "True";
+            }
+            if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
+            {
+                return "False";
+            }
+            return value;
+        }
+
+        /// <summary>XMZADD 20260915 识别 VB 成员结束边界以阻断同名局部字典跨方法串用。</summary>
+        private static bool IsVbMemberBoundary(string code)
+        {
+            return string.Equals(code, "End Sub", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(code, "End Function", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(code, "End Property", StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>XMZADD 20260904 仅在同文件证据把字段唯一归属到一张表时发布标题命名，否则记录冲突。</summary>
         private static void ExtractCaptions(string sourcePath, string modulePath, string[] codeLines,
             string[] originalLines,
@@ -1381,6 +1883,48 @@ namespace SHB.EosDataDictionary.Services
                 fieldName, sourcePath, sourceLine, ruleName + "Conflict", rawValue, originalText,
                 "同名界面字段在同文件关联多张表，仅保留冲突审计且不用于中文命名。",
                 usageKind: SourceUsageKind.Display);
+        }
+
+        /// <summary>XMZADD 20260915 按物理字段、常量值和中文含义去重并创建可审计枚举证据。</summary>
+        private static void AddEnumerationEvidence(IList<SourceEvidence> result,
+            ISet<string> deduplicationKeys, string objectName, string fieldName, string modulePath,
+            string enumValue, string enumChineseName, string sourcePath, int sourceLine,
+            string ruleName, string rawValue, string originalText, string explanation)
+        {
+            if (string.IsNullOrWhiteSpace(objectName) || string.IsNullOrWhiteSpace(fieldName) ||
+                string.IsNullOrWhiteSpace(enumValue) || !ContainsChineseCharacter(enumChineseName))
+            {
+                return;
+            }
+            string key = (ruleName ?? string.Empty) + "|" + objectName + "|" + fieldName + "|" +
+                         enumValue + "|" + enumChineseName + "|" + SourceUsageKind.Enumeration.ToString();
+            if (!deduplicationKeys.Add(key))
+            {
+                return;
+            }
+
+            result.Add(new SourceEvidence
+            {
+                ObjectName = objectName,
+                FieldName = fieldName,
+                ModulePath = modulePath,
+                EnumValue = enumValue,
+                EnumChineseName = enumChineseName,
+                Strength = SourceEvidenceStrength.DirectBusinessCode,
+                UsageKind = SourceUsageKind.Enumeration,
+                Evidence = new EvidenceItem
+                {
+                    SourceType = "EOS业务源码",
+                    SourcePath = sourcePath,
+                    SourceLine = sourceLine,
+                    RuleName = ruleName,
+                    RawValue = string.IsNullOrWhiteSpace(rawValue)
+                        ? enumValue + "=" + enumChineseName
+                        : rawValue.Trim(),
+                    OriginalText = string.IsNullOrWhiteSpace(originalText) ? rawValue : originalText,
+                    Explanation = explanation
+                }
+            });
         }
 
         /// <summary>XMZADD 20260911 按规则、表、字段、目标、候选和读写方向去重可审计证据。</summary>
@@ -2084,6 +2628,40 @@ namespace SHB.EosDataDictionary.Services
 
             public int StartIndex { get; private set; }
             public string Text { get; private set; }
+        }
+
+        /// <summary>XMZADD 20260915 保存提取阶段尚未发布的单个枚举值、中文含义和源码位置。</summary>
+        private sealed class EnumerationSourceItem
+        {
+            /// <summary>XMZADD 20260915 创建只含字面常量的枚举证据候选。</summary>
+            public EnumerationSourceItem(string value, string chineseName, int sourceLine,
+                string rawValue, string originalText)
+            {
+                Value = value;
+                ChineseName = chineseName;
+                SourceLine = sourceLine;
+                RawValue = rawValue;
+                OriginalText = originalText;
+            }
+
+            public string Value { get; private set; }
+            public string ChineseName { get; private set; }
+            public int SourceLine { get; private set; }
+            public string RawValue { get; private set; }
+            public string OriginalText { get; private set; }
+        }
+
+        /// <summary>XMZADD 20260915 保存一个局部 DataMap 变量的静态项并标记是否混入动态来源。</summary>
+        private sealed class MapVariableState
+        {
+            /// <summary>XMZADD 20260915 初始化局部 DataMap 的可写常量项集合。</summary>
+            public MapVariableState()
+            {
+                Items = new List<EnumerationSourceItem>();
+            }
+
+            public IList<EnumerationSourceItem> Items { get; private set; }
+            public bool HasDynamicEntry { get; set; }
         }
 
         /// <summary>XMZADD 20260914 保存受三十二行约束的 SQL 逻辑窗口、别名原文及源码位置。</summary>

@@ -536,6 +536,213 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual(ConfidenceStatus.Guessed, table.Fields[0].ChineseName.Status);
         }
 
+        /// <summary>XMZADD 20260915 验证字段绑定的直接业务代码枚举进入快照并保留来源证据。</summary>
+        [TestMethod]
+        public void Apply_DirectFieldEnumeration_PublishesEnumItems()
+        {
+            SnapshotData snapshot = CreateEnumerationSnapshot();
+            var evidence = new List<SourceEvidence>
+            {
+                CreateEnumerationEvidence("GridColumnDataMap", "0", "未审核",
+                    "ERP/DA/AcceptanceQuery.vb", 20),
+                CreateEnumerationEvidence("GridColumnDataMap", "1", "已审核",
+                    "ERP/DA/AcceptanceQuery.vb", 21)
+            };
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.IsNotNull(field.EnumName);
+            Assert.AreEqual("Status业务枚举", field.EnumName.Value);
+            Assert.AreEqual(2, field.EnumItems.Count);
+            EnumItemMetadata pending = FindEnumItem(field, "0", "未审核");
+            Assert.IsNotNull(pending);
+            Assert.AreEqual(ConfidenceStatus.CodeEvidence, pending.ChineseName.Status);
+            AssertEvidenceLocation(pending.ChineseName.Evidence, "ERP/DA/AcceptanceQuery.vb", 20);
+        }
+
+        /// <summary>XMZADD 20260915 验证同一枚举含义的独立源码位置合并证据而不生成重复项。</summary>
+        [TestMethod]
+        public void Apply_DuplicateEnumerationMeaning_MergesEvidence()
+        {
+            SnapshotData snapshot = CreateEnumerationSnapshot();
+            var evidence = new List<SourceEvidence>
+            {
+                CreateEnumerationEvidence("SqlCaseEnum", "1", "已审核",
+                    "ERP/DA/AcceptanceQuery.vb", 20),
+                CreateEnumerationEvidence("VbSelectCaseEnum", "1", "已审核",
+                    "ERP/DA/AcceptanceStatus.vb", 35)
+            };
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.AreEqual(1, field.EnumItems.Count);
+            Assert.AreEqual(2, field.EnumItems[0].ChineseName.Evidence.Count);
+            AssertEvidenceLocation(field.EnumItems[0].ChineseName.Evidence,
+                "ERP/DA/AcceptanceQuery.vb", 20);
+            AssertEvidenceLocation(field.EnumItems[0].ChineseName.Evidence,
+                "ERP/DA/AcceptanceStatus.vb", 35);
+        }
+
+        /// <summary>XMZADD 20260915 验证同一枚举值出现不同中文时保留全部候选并显式标记冲突。</summary>
+        [TestMethod]
+        public void Apply_ConflictingEnumerationMeaning_PreservesAllCandidates()
+        {
+            SnapshotData snapshot = CreateEnumerationSnapshot();
+            var evidence = new List<SourceEvidence>
+            {
+                CreateEnumerationEvidence("SqlCaseEnum", "1", "已审核",
+                    "ERP/DA/AcceptanceQuery.vb", 20),
+                CreateEnumerationEvidence("GridColumnDataMap", "1", "审核通过",
+                    "ERP/DA/AcceptanceEdit.vb", 35)
+            };
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.AreEqual(2, field.EnumItems.Count);
+            Assert.AreEqual(ConfidenceStatus.GuessedConflict,
+                FindEnumItem(field, "1", "已审核").ChineseName.Status);
+            Assert.AreEqual(ConfidenceStatus.GuessedConflict,
+                FindEnumItem(field, "1", "审核通过").ChineseName.Status);
+            Assert.AreEqual(ConfidenceStatus.GuessedConflict, field.EnumName.Status);
+        }
+
+        /// <summary>XMZADD 20260915 验证业务代码枚举冲突不能覆盖知识库或人工维护的既有含义。</summary>
+        [TestMethod]
+        public void Apply_AuthoritativeEnumeration_PreservesExistingCandidate()
+        {
+            SnapshotData snapshot = CreateEnumerationSnapshot();
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            field.EnumName = new MetadataValue
+            {
+                Value = "验收状态枚举",
+                Status = ConfidenceStatus.KnowledgeBaseEvidence,
+                Evidence = new List<EvidenceItem> { new EvidenceItem { RuleName = "ProjectFieldEnum" } }
+            };
+            field.EnumItems.Add(new EnumItemMetadata
+            {
+                Value = "1",
+                ChineseName = new MetadataValue
+                {
+                    Value = "已审核",
+                    Status = ConfidenceStatus.KnowledgeBaseEvidence,
+                    IsLocked = true,
+                    Evidence = new List<EvidenceItem>()
+                }
+            });
+            var evidence = new List<SourceEvidence>
+            {
+                CreateEnumerationEvidence("GridColumnDataMap", "1", "审核通过",
+                    "ERP/DA/AcceptanceEdit.vb", 35)
+            };
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            Assert.AreEqual("验收状态枚举", field.EnumName.Value);
+            Assert.AreEqual(ConfidenceStatus.KnowledgeBaseEvidence, field.EnumName.Status);
+            Assert.AreEqual(2, field.EnumItems.Count);
+            Assert.AreEqual(ConfidenceStatus.KnowledgeBaseEvidence,
+                FindEnumItem(field, "1", "已审核").ChineseName.Status);
+            Assert.AreEqual(ConfidenceStatus.GuessedConflict,
+                FindEnumItem(field, "1", "审核通过").ChineseName.Status);
+        }
+
+        /// <summary>XMZADD 20260915 验证实体属性声明的命名枚举只采用直接业务源码中的常量成员。</summary>
+        [TestMethod]
+        public void Apply_NamedEnumProperty_MapsBusinessEnumMembers()
+        {
+            SnapshotData snapshot = CreateEnumerationSnapshot();
+            var evidence = new List<SourceEvidence>
+            {
+                new SourceEvidence
+                {
+                    ObjectName = "DA_Acceptance",
+                    FieldName = "Status",
+                    PropertyTypeName = "AcceptanceStatus",
+                    Strength = SourceEvidenceStrength.Authoritative,
+                    Evidence = new EvidenceItem
+                    {
+                        SourcePath = "ERP/表-类定义/code_DA.vb",
+                        SourceLine = 300,
+                        RuleName = "EntityProperty"
+                    }
+                },
+                new SourceEvidence
+                {
+                    EnumName = "AcceptanceStatus",
+                    EnumValue = "Approved",
+                    EnumRawValue = "1",
+                    EnumChineseName = "已审核",
+                    Strength = SourceEvidenceStrength.DirectBusinessCode,
+                    UsageKind = SourceUsageKind.Enumeration,
+                    Evidence = new EvidenceItem
+                    {
+                        SourcePath = "ERP/DA/AcceptanceStatus.vb",
+                        SourceLine = 8,
+                        RuleName = "EnumMember"
+                    }
+                },
+                new SourceEvidence
+                {
+                    EnumName = "AcceptanceStatus",
+                    EnumValue = "Dynamic",
+                    EnumRawValue = "GetStatusValue()",
+                    EnumChineseName = "动态状态",
+                    Strength = SourceEvidenceStrength.DirectBusinessCode,
+                    UsageKind = SourceUsageKind.Enumeration,
+                    Evidence = new EvidenceItem
+                    {
+                        SourcePath = "ERP/DA/AcceptanceStatus.vb",
+                        SourceLine = 9,
+                        RuleName = "EnumMember"
+                    }
+                }
+            };
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.AreEqual("AcceptanceStatus", field.EnumName.Value);
+            Assert.AreEqual(1, field.EnumItems.Count);
+            Assert.IsNotNull(FindEnumItem(field, "1", "已审核"));
+        }
+
+        /// <summary>XMZADD 20260915 验证只读枚举集合在追加直接代码证据前被安全复制为可写集合。</summary>
+        [TestMethod]
+        public void Apply_ReadOnlyEnumerationCollection_IsSafelyExtended()
+        {
+            SnapshotData snapshot = CreateEnumerationSnapshot();
+            snapshot.Tables[0].Fields[0].EnumItems = new EnumItemMetadata[0];
+            var evidence = new List<SourceEvidence>
+            {
+                CreateEnumerationEvidence("SqlCaseEnum", "0", "未审核",
+                    "ERP/DA/AcceptanceQuery.vb", 20)
+            };
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            Assert.AreEqual(1, snapshot.Tables[0].Fields[0].EnumItems.Count);
+        }
+
+        /// <summary>XMZADD 20260915 验证直接业务枚举允许括号内的必要限定语且不把它误判为说明句。</summary>
+        [TestMethod]
+        public void Apply_EnumerationCaptionWithQualifier_PublishesCompleteMeaning()
+        {
+            SnapshotData snapshot = CreateEnumerationSnapshot();
+            var evidence = new List<SourceEvidence>
+            {
+                CreateEnumerationEvidence("VbSelectCaseEnum", "1", "有限公司(公共)",
+                    "f_MIS/流水帐/frmDA_Sheet.vb", 4502)
+            };
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            Assert.IsNotNull(FindEnumItem(
+                snapshot.Tables[0].Fields[0], "1", "有限公司(公共)"));
+        }
+
         /// <summary>XMZADD 20260904 创建截图对象对应的最小快照。</summary>
         private static SnapshotData CreateStorageSnapshot()
         {
@@ -570,6 +777,65 @@ namespace SHB.EosDataDictionary.Tests
                 });
             }
             return new SnapshotData { Tables = new List<TableMetadata> { table } };
+        }
+
+        /// <summary>XMZADD 20260915 创建只含验收状态字段的枚举富化快照。</summary>
+        private static SnapshotData CreateEnumerationSnapshot()
+        {
+            return new SnapshotData
+            {
+                Tables = new List<TableMetadata>
+                {
+                    new TableMetadata
+                    {
+                        SchemaName = "dbo",
+                        ObjectName = "DA_Acceptance",
+                        ChineseName = new MetadataValue
+                        {
+                            Value = "承兑验收表",
+                            Status = ConfidenceStatus.CodeEvidence
+                        },
+                        Fields = new List<FieldMetadata>
+                        {
+                            new FieldMetadata
+                            {
+                                FieldName = "Status",
+                                ChineseName = new MetadataValue
+                                {
+                                    Value = "验收状态",
+                                    Status = ConfidenceStatus.CodeEvidence
+                                },
+                                EnumItems = new List<EnumItemMetadata>()
+                            }
+                        }
+                    }
+                }
+            };
+        }
+
+        /// <summary>XMZADD 20260915 创建字段归属、枚举值、中文含义和源码位置完整的直接证据。</summary>
+        private static SourceEvidence CreateEnumerationEvidence(string ruleName, string value,
+            string chineseName, string sourcePath, int sourceLine)
+        {
+            return new SourceEvidence
+            {
+                ObjectName = "DA_Acceptance",
+                FieldName = "Status",
+                EnumValue = value,
+                EnumChineseName = chineseName,
+                Strength = SourceEvidenceStrength.DirectBusinessCode,
+                UsageKind = SourceUsageKind.Enumeration,
+                Evidence = new EvidenceItem
+                {
+                    SourceType = "EOS业务源码",
+                    SourcePath = sourcePath,
+                    SourceLine = sourceLine,
+                    RuleName = ruleName,
+                    RawValue = value,
+                    OriginalText = value + "=" + chineseName,
+                    Explanation = "业务代码明确映射字段枚举值。"
+                }
+            };
         }
 
         /// <summary>XMZADD 20260904 创建仓储配置实体和动态表字段的源码证据。</summary>
@@ -686,6 +952,22 @@ namespace SHB.EosDataDictionary.Tests
                 }
             }
             Assert.Fail("未找到字段：" + fieldName);
+            return null;
+        }
+
+        /// <summary>XMZADD 20260915 按值和中文含义定位字段枚举候选。</summary>
+        private static EnumItemMetadata FindEnumItem(FieldMetadata field, string value, string chineseName)
+        {
+            for (int index = 0; index < field.EnumItems.Count; index++)
+            {
+                EnumItemMetadata item = field.EnumItems[index];
+                if (item != null && item.ChineseName != null &&
+                    string.Equals(item.Value, value, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(item.ChineseName.Value, chineseName, StringComparison.Ordinal))
+                {
+                    return item;
+                }
+            }
             return null;
         }
 
