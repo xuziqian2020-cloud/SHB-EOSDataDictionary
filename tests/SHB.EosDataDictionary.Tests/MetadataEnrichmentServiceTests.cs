@@ -64,7 +64,8 @@ namespace SHB.EosDataDictionary.Tests
 
             MetadataEnrichmentService.Enrich(snapshot, evidence);
 
-            MetadataValue name = snapshot.Tables[0].Fields[0].ChineseName;
+            Assert.AreEqual(string.Empty, snapshot.Tables[0].Fields[0].ChineseName.Value);
+            MetadataValue name = snapshot.Tables[0].Fields[0].SuggestedChineseName;
             Assert.AreEqual("订单状态", name.Value);
             Assert.AreEqual(ConfidenceStatus.CodeEvidence, name.Status);
             Assert.AreEqual(1, name.Evidence.Count);
@@ -155,10 +156,85 @@ namespace SHB.EosDataDictionary.Tests
 
             MetadataEnrichmentService.Enrich(snapshot, evidence);
 
-            Assert.AreEqual("订单状态", snapshot.Tables[0].Fields[0].ChineseName.Value);
-            Assert.AreEqual(ConfidenceStatus.CodeEvidence, snapshot.Tables[0].Fields[0].ChineseName.Status);
+            Assert.AreEqual(string.Empty, snapshot.Tables[0].Fields[0].ChineseName.Value);
+            Assert.AreEqual("订单状态", snapshot.Tables[0].Fields[0].SuggestedChineseName.Value);
+            Assert.AreEqual(ConfidenceStatus.CodeEvidence,
+                snapshot.Tables[0].Fields[0].SuggestedChineseName.Status);
             Assert.AreEqual("Kis_T_DEMO_ORDER.FSTATUS", snapshot.Tables[0].Fields[0].EntityPropertyName.Value);
             Assert.AreEqual(ConfidenceStatus.CodeEvidence, snapshot.Tables[0].Fields[0].EntityPropertyName.Status);
+        }
+
+        /// <summary>XMZADD 20260915 验证无业务源码依据的字段词法翻译只能进入参考译名。</summary>
+        [TestMethod]
+        public void Enrich_NamingOnlyFieldTranslation_UsesSuggestionLayer()
+        {
+            SnapshotData snapshot = CreateSingleFieldSnapshot("Item_Image", "Img_Name");
+
+            MetadataEnrichmentService.Enrich(snapshot, new List<SourceEvidence>());
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.AreEqual(string.Empty, field.ChineseName.Value);
+            Assert.AreEqual("图片名称", field.SuggestedChineseName.Value);
+            Assert.AreEqual(ConfidenceStatus.Guessed, field.SuggestedChineseName.Status);
+        }
+
+        /// <summary>XMZADD 20260915 验证两个独立文件给出的相同中强字段名称会合并证据并成为正式名称。</summary>
+        [TestMethod]
+        public void Enrich_TwoIndependentFieldCommentsAgree_PromotesMergedOfficialName()
+        {
+            SnapshotData snapshot = CreateSingleFieldSnapshot("DA_Acceptance", "Owner_Company_ID");
+            var evidence = new List<SourceEvidence>
+            {
+                CreateFieldNameEvidence("DA_Acceptance", "Owner_Company_ID", "货主公司ID",
+                    "EntityProperty", "ERP/DA/AcceptanceEdit.vb", 35),
+                CreateFieldNameEvidence("DA_Acceptance", "Owner_Company_ID", "货主公司ID",
+                    "EntityProperty", "Logistics/AcceptanceQuery.vb", 62)
+            };
+
+            MetadataEnrichmentService.Enrich(snapshot, evidence);
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.AreEqual("货主公司ID", field.ChineseName.Value);
+            Assert.AreEqual(2, field.ChineseName.Evidence.Count);
+        }
+
+        /// <summary>XMZADD 20260915 验证非生成业务代码中紧邻字段声明的 XML 中文摘要属于权威直接证据。</summary>
+        [TestMethod]
+        public void Enrich_AuthoritativeBusinessXmlSummary_PromotesSingleFieldName()
+        {
+            SnapshotData snapshot = CreateSingleFieldSnapshot("DA_Acceptance", "Owner_Company_ID");
+            SourceEvidence source = CreateFieldNameEvidence(
+                "DA_Acceptance", "Owner_Company_ID", "货主公司ID",
+                "EntityProperty", "ERP/DA/Acceptance_Partial.vb", 35);
+            source.Strength = SourceEvidenceStrength.Authoritative;
+
+            MetadataEnrichmentService.Enrich(snapshot, new List<SourceEvidence> { source });
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.AreEqual("货主公司ID", field.ChineseName.Value);
+            Assert.IsNull(field.SuggestedChineseName);
+        }
+
+        /// <summary>XMZADD 20260915 验证两个直接标题含义冲突时不把扫描顺序中的首项发布成正式名。</summary>
+        [TestMethod]
+        public void Enrich_DirectCaptionConflict_PreservesBothReferenceCandidates()
+        {
+            SnapshotData snapshot = CreateSingleFieldSnapshot("DA_Acceptance", "Status");
+            var evidence = new List<SourceEvidence>
+            {
+                CreateFieldNameEvidence("DA_Acceptance", "Status", "审核状态",
+                    "SqlColumnAlias", "ERP/DA/AcceptanceQuery.vb", 20),
+                CreateFieldNameEvidence("DA_Acceptance", "Status", "单据状态",
+                    "GridColumnCaption", "ERP/DA/AcceptanceEdit.vb", 35)
+            };
+
+            MetadataEnrichmentService.Enrich(snapshot, evidence);
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.AreEqual(string.Empty, field.ChineseName.Value);
+            Assert.IsNotNull(field.SuggestedChineseName);
+            Assert.AreEqual(ConfidenceStatus.GuessedConflict, field.SuggestedChineseName.Status);
+            Assert.AreEqual(1, field.AlternativeChineseNames.Count);
         }
 
         /// <summary>XMZADD 20260831 验证过程说明不能覆盖可直接翻译的表名和字段名。</summary>
@@ -201,12 +277,14 @@ namespace SHB.EosDataDictionary.Tests
 
             MetadataEnrichmentService.Enrich(snapshot, evidence);
 
-            Assert.AreEqual("物料图片表", snapshot.Tables[0].ChineseName.Value);
-            Assert.AreEqual(ConfidenceStatus.Guessed, snapshot.Tables[0].ChineseName.Status);
-            Assert.AreEqual("名称翻译", snapshot.Tables[0].ChineseName.SourceType);
-            Assert.AreEqual("图片ID", snapshot.Tables[0].Fields[0].ChineseName.Value);
-            Assert.AreEqual("名称翻译", snapshot.Tables[0].Fields[0].ChineseName.SourceType);
-            Assert.IsFalse(snapshot.Tables[0].ChineseName.Value.Contains("Item_Image"));
+            Assert.AreEqual(string.Empty, snapshot.Tables[0].ChineseName.Value);
+            Assert.AreEqual("物料图片表", snapshot.Tables[0].SuggestedChineseName.Value);
+            Assert.AreEqual(ConfidenceStatus.Guessed, snapshot.Tables[0].SuggestedChineseName.Status);
+            Assert.AreEqual("名称翻译", snapshot.Tables[0].SuggestedChineseName.SourceType);
+            Assert.AreEqual(string.Empty, snapshot.Tables[0].Fields[0].ChineseName.Value);
+            Assert.AreEqual("图片ID", snapshot.Tables[0].Fields[0].SuggestedChineseName.Value);
+            Assert.AreEqual("名称翻译", snapshot.Tables[0].Fields[0].SuggestedChineseName.SourceType);
+            Assert.IsFalse(snapshot.Tables[0].SuggestedChineseName.Value.Contains("Item_Image"));
         }
 
         /// <summary>XMZADD 20260831 验证普通界面类不会被误展示为数据库表实体类。</summary>
@@ -399,9 +477,11 @@ namespace SHB.EosDataDictionary.Tests
 
             MetadataEnrichmentService.Enrich(snapshot, new List<SourceEvidence>());
 
-            Assert.AreEqual("验收状态", field.ChineseName.Value);
-            Assert.AreEqual(2, field.ChineseName.Evidence.Count);
-            Assert.AreEqual("NormalizeNameCandidate", field.ChineseName.Evidence[1].RuleName);
+            Assert.AreEqual(string.Empty, field.ChineseName.Value);
+            Assert.AreEqual("验收状态", field.SuggestedChineseName.Value);
+            Assert.AreEqual(2, field.SuggestedChineseName.Evidence.Count);
+            Assert.AreEqual("NormalizeNameCandidate",
+                field.SuggestedChineseName.Evidence[1].RuleName);
         }
 
         /// <summary>XMZADD 20260831 验证源码没有枚举依据时枚举属性保持为空。</summary>
@@ -473,12 +553,12 @@ namespace SHB.EosDataDictionary.Tests
 
             MetadataEnrichmentService.Enrich(snapshot, new List<SourceEvidence>());
 
-            Assert.AreEqual("暂无可靠中文名称", snapshot.Tables[0].ChineseName.Value);
+            Assert.AreEqual(string.Empty, snapshot.Tables[0].ChineseName.Value);
             Assert.AreEqual(ConfidenceStatus.PendingConfirmation, snapshot.Tables[0].ChineseName.Status);
-            Assert.AreEqual("规则推测", snapshot.Tables[0].ChineseName.SourceType);
-            Assert.AreEqual("暂无可靠中文名称", snapshot.Tables[0].Fields[0].ChineseName.Value);
+            Assert.IsNull(snapshot.Tables[0].SuggestedChineseName);
+            Assert.AreEqual(string.Empty, snapshot.Tables[0].Fields[0].ChineseName.Value);
             Assert.AreEqual(ConfidenceStatus.PendingConfirmation, snapshot.Tables[0].Fields[0].ChineseName.Status);
-            Assert.AreEqual("规则推测", snapshot.Tables[0].Fields[0].ChineseName.SourceType);
+            Assert.IsNull(snapshot.Tables[0].Fields[0].SuggestedChineseName);
         }
 
         /// <summary>XMZADD 20260831 验证技术目录归并为其他、采购等真实业务模块保留且人工维护模块不被覆盖。</summary>
@@ -559,9 +639,12 @@ namespace SHB.EosDataDictionary.Tests
 
             MetadataEnrichmentService.Enrich(snapshot, new List<SourceEvidence>());
 
-            Assert.AreEqual("图片名称", snapshot.Tables[0].Fields[0].ChineseName.Value);
-            Assert.AreEqual(ConfidenceStatus.Guessed, snapshot.Tables[0].Fields[0].ChineseName.Status);
-            Assert.AreEqual("名称翻译", snapshot.Tables[0].Fields[0].ChineseName.SourceType);
+            Assert.AreEqual(string.Empty, snapshot.Tables[0].Fields[0].ChineseName.Value);
+            Assert.AreEqual("图片名称", snapshot.Tables[0].Fields[0].SuggestedChineseName.Value);
+            Assert.AreEqual(ConfidenceStatus.Guessed,
+                snapshot.Tables[0].Fields[0].SuggestedChineseName.Status);
+            Assert.AreEqual("名称翻译",
+                snapshot.Tables[0].Fields[0].SuggestedChineseName.SourceType);
         }
 
         /// <summary>XMZADD 20260903 验证 ACCOUNT 不再单独等同财务，并按托盘出入库或明确 FINANCE 上下文归类。</summary>
@@ -664,7 +747,8 @@ namespace SHB.EosDataDictionary.Tests
 
             MetadataEnrichmentService.Enrich(snapshot, evidence);
 
-            Assert.AreEqual("状态", snapshot.Tables[2].Fields[1].ChineseName.Value);
+            Assert.AreEqual(string.Empty, snapshot.Tables[2].Fields[1].ChineseName.Value);
+            Assert.AreEqual("状态", snapshot.Tables[2].Fields[1].SuggestedChineseName.Value);
             Assert.AreEqual(1, snapshot.Tables[2].Fields[1].EnumItems.Count);
             Assert.AreEqual("已审核", snapshot.Tables[2].Fields[1].EnumItems[0].ChineseName.Value);
             Assert.AreEqual(1, snapshot.Tables[2].Fields[1].EnumName.Evidence.Count);
@@ -698,6 +782,28 @@ namespace SHB.EosDataDictionary.Tests
                             }
                         }
                     }
+                }
+            };
+        }
+
+        /// <summary>XMZADD 20260915 创建带物理字段归属、中文候选和相对源码位置的命名证据。</summary>
+        private static SourceEvidence CreateFieldNameEvidence(string objectName, string fieldName,
+            string chineseName, string ruleName, string sourcePath, int sourceLine)
+        {
+            return new SourceEvidence
+            {
+                ObjectName = objectName,
+                FieldName = fieldName,
+                ChineseNameCandidate = chineseName,
+                Strength = SourceEvidenceStrength.DirectBusinessCode,
+                Evidence = new EvidenceItem
+                {
+                    SourceType = "EOS业务源码",
+                    SourcePath = sourcePath,
+                    SourceLine = sourceLine,
+                    RuleName = ruleName,
+                    RawValue = chineseName,
+                    OriginalText = chineseName
                 }
             };
         }

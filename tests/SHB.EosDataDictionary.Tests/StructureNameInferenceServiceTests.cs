@@ -32,11 +32,13 @@ namespace SHB.EosDataDictionary.Tests
             new StructureNameInferenceService(null).Enrich(
                 snapshot, new List<SourceEvidence>(), null, CancellationToken.None);
 
-            MetadataValue value = snapshot.Tables[0].Fields[0].ChineseName;
+            Assert.AreEqual(string.Empty, snapshot.Tables[0].Fields[0].ChineseName.Value);
+            MetadataValue value = snapshot.Tables[0].Fields[0].SuggestedChineseName;
             Assert.AreEqual("业务中心状态", value.Value);
             Assert.AreEqual(ConfidenceStatus.Guessed, value.Status);
             Assert.IsFalse(value.IsManualOverride);
             Assert.IsFalse(value.IsLocked);
+            Assert.IsNull(value.OriginalAutomaticValue);
         }
 
         /// <summary>XMZADD 20260901 验证知识库模糊条目经过缩写上下文交给可选 AI，最终仍标记为等待确认的推测。</summary>
@@ -55,8 +57,9 @@ namespace SHB.EosDataDictionary.Tests
 
                 Assert.AreEqual(1, ai.CallCount);
                 Assert.IsTrue(ContextContains(ai.LastContext.EvidenceContext, "知识库："));
-                Assert.AreEqual("业务中心明细", snapshot.Tables[0].Fields[0].ChineseName.Value);
-                Assert.AreEqual(ConfidenceStatus.Guessed, snapshot.Tables[0].Fields[0].ChineseName.Status);
+                Assert.AreEqual(string.Empty, snapshot.Tables[0].Fields[0].ChineseName.Value);
+                Assert.AreEqual("业务中心明细", snapshot.Tables[0].Fields[0].SuggestedChineseName.Value);
+                Assert.AreEqual(ConfidenceStatus.Guessed, snapshot.Tables[0].Fields[0].SuggestedChineseName.Status);
             }
             finally
             {

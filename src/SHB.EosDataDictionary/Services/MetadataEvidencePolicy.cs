@@ -139,6 +139,81 @@ namespace SHB.EosDataDictionary.Services
                    existing.Status == ConfidenceStatus.AiGuessed;
         }
 
+        /// <summary>XMZADD 20260915 判断名称是否属于必须保留的人工结论、可靠数据库注释或精确项目知识。</summary>
+        public static bool IsAuthoritativeBusinessName(MetadataValue value)
+        {
+            if (value == null || string.IsNullOrWhiteSpace(value.Value))
+            {
+                return false;
+            }
+            if (value.IsManualOverride || value.IsLocked ||
+                value.Status == ConfidenceStatus.LocalOverride ||
+                value.Status == ConfidenceStatus.Confirmed)
+            {
+                return true;
+            }
+            if (!IdentifierTranslationService.IsReliableChineseName(value.Value))
+            {
+                return false;
+            }
+            if (value.Status == ConfidenceStatus.DatabaseEvidence ||
+                (value.Status == ConfidenceStatus.GuessedConflict && HasDatabaseCommentEvidence(value)))
+            {
+                return true;
+            }
+            if ((value.Status == ConfidenceStatus.CodeEvidence ||
+                 value.Status == ConfidenceStatus.GuessedConflict) &&
+                string.Equals(value.SourceType, "权威源码注释", StringComparison.Ordinal) &&
+                HasAuthoritativeSourceComment(value))
+            {
+                return true;
+            }
+            return (value.Status == ConfidenceStatus.KnowledgeBaseEvidence ||
+                    value.Status == ConfidenceStatus.GuessedConflict) &&
+                   HasExactKnowledgeEvidence(value);
+        }
+
+        /// <summary>XMZADD 20260915 从保留证据识别数据库名称注释，使冲突状态不会抹去原权威等级。</summary>
+        private static bool HasDatabaseCommentEvidence(MetadataValue value)
+        {
+            if (value == null || value.Evidence == null)
+            {
+                return false;
+            }
+            for (int index = 0; index < value.Evidence.Count; index++)
+            {
+                EvidenceItem evidence = value.Evidence[index];
+                string ruleName = evidence == null ? string.Empty : evidence.RuleName ?? string.Empty;
+                if (string.Equals(ruleName, "DatabaseComment", StringComparison.Ordinal) ||
+                    string.Equals(ruleName, "SqlExtendedDescription", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>XMZADD 20260915 核验权威源码候选确实来自实体或属性声明，避免仅凭显示标签提升普通代码推测。</summary>
+        private static bool HasAuthoritativeSourceComment(MetadataValue value)
+        {
+            if (value == null || value.Evidence == null)
+            {
+                return false;
+            }
+            for (int index = 0; index < value.Evidence.Count; index++)
+            {
+                EvidenceItem evidence = value.Evidence[index];
+                string ruleName = evidence == null ? string.Empty : evidence.RuleName ?? string.Empty;
+                if (string.Equals(ruleName, "EntityProperty", StringComparison.Ordinal) ||
+                    string.Equals(ruleName, "TableNameProperty", StringComparison.Ordinal) ||
+                    string.Equals(ruleName, "KisEntityClass", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         /// <summary>XMZADD 20260905 判断候选是否完整保留旧中文名称并只增加已识别业务修饰语。</summary>
         private static bool IsCompleteRecognizedRefinement(string existingValue, string candidate)
         {
@@ -184,7 +259,7 @@ namespace SHB.EosDataDictionary.Services
         }
 
         /// <summary>XMZADD 20260903 识别精确到具体表、字段、模块或枚举的项目知识库证据。</summary>
-        private static bool HasExactKnowledgeEvidence(MetadataValue value)
+        public static bool HasExactKnowledgeEvidence(MetadataValue value)
         {
             if (value == null || value.Evidence == null)
             {

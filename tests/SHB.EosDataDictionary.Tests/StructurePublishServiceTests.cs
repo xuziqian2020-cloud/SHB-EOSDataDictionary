@@ -738,7 +738,7 @@ namespace SHB.EosDataDictionary.Tests
             }
         }
 
-        /// <summary>XMZADD 20260901 验证一次结构扫描只创建一个强类型批次，且源码绝对根目录不会进入公开证据。</summary>
+        /// <summary>XMZADD 20260901 验证一次结构扫描只创建一个强类型批次，且弱名称证据不会伪装成正式名称操作。</summary>
         [TestMethod]
         public async Task ChangedStructure_CreatesOneIssueWithTypedOperationsAndRelativeEvidence()
         {
@@ -773,11 +773,11 @@ namespace SHB.EosDataDictionary.Tests
                 Assert.AreEqual(1, client.IssueCreateCount);
                 Assert.AreSame(client.LastBatch, result.Batch);
                 Assert.IsTrue(ContainsOperation(client.LastBatch, "AddField"));
-                Assert.IsTrue(ContainsOperation(client.LastBatch, "Set"));
+                Assert.IsFalse(ContainsOperation(client.LastBatch, "Set"));
                 string json = DictionaryJsonSerializer.SerializeBatch(client.LastBatch);
                 Assert.IsFalse(json.Contains(sourceRoot));
                 Assert.IsFalse(json.Contains("fake-password"));
-                Assert.AreEqual("Order/OrderEntity.vb", FindEvidencePath(client.LastBatch));
+                Assert.IsNull(FindEvidencePath(client.LastBatch));
             }
             finally
             {
@@ -1208,8 +1208,11 @@ namespace SHB.EosDataDictionary.Tests
                     CreateRequest(sourceRoot, null), CancellationToken.None);
 
                 Assert.AreEqual(StructurePublishOutcome.NoChanges, result.Outcome);
-                Assert.AreEqual("业务中心状态", current.Tables[0].Fields[0].ChineseName.Value);
-                Assert.AreEqual(ConfidenceStatus.Guessed, current.Tables[0].Fields[0].ChineseName.Status);
+                Assert.AreEqual(string.Empty, current.Tables[0].Fields[0].ChineseName.Value);
+                Assert.AreEqual("业务中心状态",
+                    current.Tables[0].Fields[0].SuggestedChineseName.Value);
+                Assert.AreEqual(ConfidenceStatus.Guessed,
+                    current.Tables[0].Fields[0].SuggestedChineseName.Status);
                 Assert.AreEqual(0, client.IssueCreateCount);
             }
             finally

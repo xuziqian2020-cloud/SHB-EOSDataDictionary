@@ -384,7 +384,8 @@ namespace SHB.EosDataDictionary.Services
                 if (!string.IsNullOrWhiteSpace(knownName))
                 {
                     ApplyFieldValue(field, knownName, 90, specificEvidence, entityEvidence,
-                        "字段名称来自所属仓储配置实体及动态 SQL 的真实用途。");
+                        "字段名称来自所属仓储配置实体及动态 SQL 的真实用途。",
+                        BusinessUsageRule, 1);
                     continue;
                 }
 
@@ -1138,9 +1139,42 @@ namespace SHB.EosDataDictionary.Services
                 return false;
             }
 
-            field.ChineseName = CreateCodeValue(
+            MetadataValue inferredValue = CreateCodeValue(
                 value, confidenceScore, participatingEvidence, explanation, field.ChineseName, true);
+            EnsureInferenceRuleEvidence(inferredValue, ruleName, field.FieldName, explanation);
+            field.ChineseName = inferredValue;
             return true;
+        }
+
+        /// <summary>XMZADD 20260915 为聚合业务推断补充明确规则，避免最终准入只能看到底层机械映射。</summary>
+        private static void EnsureInferenceRuleEvidence(MetadataValue value, string ruleName,
+            string fieldName, string explanation)
+        {
+            if (value == null || string.IsNullOrWhiteSpace(ruleName))
+            {
+                return;
+            }
+            if (value.Evidence == null)
+            {
+                value.Evidence = new List<EvidenceItem>();
+            }
+            for (int index = 0; index < value.Evidence.Count; index++)
+            {
+                EvidenceItem existing = value.Evidence[index];
+                if (existing != null && string.Equals(existing.RuleName, ruleName,
+                        StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+            value.Evidence.Add(new EvidenceItem
+            {
+                SourceType = "EOS业务推断",
+                RuleName = ruleName,
+                RawValue = fieldName,
+                OriginalText = fieldName,
+                Explanation = explanation
+            });
         }
 
         /// <summary>XMZADD 20260905 按聚合证据类型写入字段用途，帮助新人区分界面展示、关联查询和实体读写。</summary>

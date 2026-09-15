@@ -160,7 +160,9 @@ namespace SHB.EosDataDictionary.Services
                 if (IdentifierTranslationService.IsReliableChineseName(normalized.Value))
                 {
                     nameCandidates.Add(new MetadataCandidate(normalized.Value, ConfidenceStatus.CodeEvidence,
-                        "EOS 源码注释", CreatePublishedEvidence(item.Evidence, normalized.RawEvidence)));
+                        "EOS 源码注释", CreatePublishedEvidence(item.Evidence, normalized.RawEvidence),
+                        item.Strength == SourceEvidenceStrength.Authoritative ? 98 : 0,
+                        item.Strength == SourceEvidenceStrength.Authoritative ? "权威源码注释" : "代码依据"));
                 }
 
                 if (IsBusinessEntityName(item.EntityName) && item.Evidence != null &&
@@ -197,26 +199,37 @@ namespace SHB.EosDataDictionary.Services
                 };
             }
 
-            if (nameCandidates.Count > 0)
-            {
-                table.ChineseName = SelectPreferredName(table.ChineseName, nameCandidates);
-            }
-            else if (table.ChineseName == null || table.ChineseName.Status == ConfidenceStatus.PendingConfirmation)
+            var layeredCandidates = CreateLayerCandidates(nameCandidates);
+            if (layeredCandidates.Count == 0 &&
+                (table.ChineseName == null || table.ChineseName.Status == ConfidenceStatus.PendingConfirmation))
             {
                 bool isFullyTranslated = IdentifierTranslationService.IsTableNameFullyTranslated(table.ObjectName);
                 string guessedName = GuessObjectName(table.ObjectName);
                 bool isMissing = !IdentifierTranslationService.IsReliableChineseName(guessedName);
-                table.ChineseName = new MetadataValue
+                if (!isMissing)
                 {
-                    Value = guessedName,
-                    Status = isMissing ? ConfidenceStatus.PendingConfirmation : ConfidenceStatus.Guessed,
-                    SourceType = isFullyTranslated && !isMissing ? "名称翻译" : "规则推测",
-                    SourceSummary = isMissing
-                        ? "未形成可靠中文名称"
-                        : isFullyTranslated ? "英文表名拆分翻译" : "英文表名保守推测",
-                    Evidence = new List<EvidenceItem>()
-                };
+                    layeredCandidates.Add(new MetadataValue
+                    {
+                        Value = guessedName,
+                        Status = ConfidenceStatus.Guessed,
+                        ConfidenceScore = isFullyTranslated ? 72 : 65,
+                        SourceType = isFullyTranslated ? "名称翻译" : "规则推测",
+                        SourceSummary = isFullyTranslated ? "英文表名拆分翻译" : "英文表名保守推测",
+                        Evidence = new List<EvidenceItem>
+                        {
+                            new EvidenceItem
+                            {
+                                SourceType = isFullyTranslated ? "名称翻译" : "规则推测",
+                                RuleName = "IdentifierTranslation",
+                                RawValue = table.ObjectName,
+                                OriginalText = table.ObjectName,
+                                Explanation = "英文表名拆分形成参考译名。"
+                            }
+                        }
+                    });
+                }
             }
+            new BusinessNameLayerService().ApplyTableCandidates(table, layeredCandidates);
 
             if (table.ModuleName == null)
             {
@@ -247,7 +260,9 @@ namespace SHB.EosDataDictionary.Services
                 if (IdentifierTranslationService.IsReliableChineseName(normalized.Value))
                 {
                     nameCandidates.Add(new MetadataCandidate(normalized.Value, ConfidenceStatus.CodeEvidence,
-                        "EOS 源码字段注释", CreatePublishedEvidence(item.Evidence, normalized.RawEvidence)));
+                        "EOS 源码字段注释", CreatePublishedEvidence(item.Evidence, normalized.RawEvidence),
+                        item.Strength == SourceEvidenceStrength.Authoritative ? 98 : 0,
+                        item.Strength == SourceEvidenceStrength.Authoritative ? "权威源码注释" : "代码依据"));
                 }
                 if (IsBusinessEntityName(item.EntityName) &&
                     (item.Evidence == null || item.Evidence.RuleName == "EntityProperty"))
@@ -265,26 +280,37 @@ namespace SHB.EosDataDictionary.Services
                 }
             }
 
-            if (nameCandidates.Count > 0)
-            {
-                field.ChineseName = SelectPreferredName(field.ChineseName, nameCandidates);
-            }
-            else if (field.ChineseName == null || field.ChineseName.Status == ConfidenceStatus.PendingConfirmation)
+            var layeredCandidates = CreateLayerCandidates(nameCandidates);
+            if (layeredCandidates.Count == 0 &&
+                (field.ChineseName == null || field.ChineseName.Status == ConfidenceStatus.PendingConfirmation))
             {
                 bool isFullyTranslated = IdentifierTranslationService.IsFieldNameFullyTranslated(field.FieldName);
                 string guessedName = GuessFieldName(field.FieldName);
                 bool isMissing = !IdentifierTranslationService.IsReliableChineseName(guessedName);
-                field.ChineseName = new MetadataValue
+                if (!isMissing)
                 {
-                    Value = guessedName,
-                    Status = isMissing ? ConfidenceStatus.PendingConfirmation : ConfidenceStatus.Guessed,
-                    SourceType = isFullyTranslated && !isMissing ? "名称翻译" : "规则推测",
-                    SourceSummary = isMissing
-                        ? "未形成可靠中文名称"
-                        : isFullyTranslated ? "英文字段名拆分翻译" : "英文字段名保守推测",
-                    Evidence = new List<EvidenceItem>()
-                };
+                    layeredCandidates.Add(new MetadataValue
+                    {
+                        Value = guessedName,
+                        Status = ConfidenceStatus.Guessed,
+                        ConfidenceScore = isFullyTranslated ? 72 : 65,
+                        SourceType = isFullyTranslated ? "名称翻译" : "规则推测",
+                        SourceSummary = isFullyTranslated ? "英文字段名拆分翻译" : "英文字段名保守推测",
+                        Evidence = new List<EvidenceItem>
+                        {
+                            new EvidenceItem
+                            {
+                                SourceType = isFullyTranslated ? "名称翻译" : "规则推测",
+                                RuleName = "IdentifierTranslation",
+                                RawValue = field.FieldName,
+                                OriginalText = field.FieldName,
+                                Explanation = "英文字段名拆分形成参考译名。"
+                            }
+                        }
+                    });
+                }
             }
+            new BusinessNameLayerService().ApplyFieldCandidates(field, layeredCandidates);
 
             if (field.EntityPropertyName == null)
             {
@@ -316,18 +342,10 @@ namespace SHB.EosDataDictionary.Services
             }
         }
 
-        /// <summary>XMZADD 20260831 按数据库、代码、AI 和命名规则优先级选择单一名称，避免把冲突候选直接拼接给用户。</summary>
-        private static MetadataValue SelectPreferredName(MetadataValue existing, IList<MetadataCandidate> codeCandidates)
+        /// <summary>XMZADD 20260915 将源码名称候选转换为带评分和完整证据的双层名称输入。</summary>
+        private static List<MetadataValue> CreateLayerCandidates(IList<MetadataCandidate> codeCandidates)
         {
-            if (!MetadataEvidencePolicy.CanReplace(existing, ConfidenceStatus.CodeEvidence, "SourceCodeName"))
-            {
-                return existing;
-            }
-
-            var votes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            var firstCandidates = new Dictionary<string, MetadataCandidate>(StringComparer.OrdinalIgnoreCase);
-            string selectedValue = null;
-            int selectedCount = 0;
+            var result = new List<MetadataValue>();
             for (int i = 0; i < codeCandidates.Count; i++)
             {
                 MetadataCandidate candidate = codeCandidates[i];
@@ -335,36 +353,40 @@ namespace SHB.EosDataDictionary.Services
                 {
                     continue;
                 }
-                int count;
-                votes.TryGetValue(candidate.Value, out count);
-                count++;
-                votes[candidate.Value] = count;
-                if (!firstCandidates.ContainsKey(candidate.Value))
+                string ruleName = candidate.Evidence == null
+                    ? string.Empty
+                    : candidate.Evidence.RuleName ?? string.Empty;
+                int score = candidate.ConfidenceScore > 0
+                    ? candidate.ConfidenceScore
+                    : (IsDirectNameRule(ruleName) ? 94 : 84);
+                var evidence = new List<EvidenceItem>();
+                if (candidate.Evidence != null)
                 {
-                    firstCandidates.Add(candidate.Value, candidate);
+                    evidence.Add(candidate.Evidence);
                 }
-                if (count > selectedCount)
+                result.Add(new MetadataValue
                 {
-                    selectedValue = candidate.Value;
-                    selectedCount = count;
-                }
+                    Value = candidate.Value,
+                    Status = candidate.Status,
+                    ConfidenceScore = score,
+                    SourceType = string.IsNullOrWhiteSpace(candidate.SourceType)
+                        ? "代码依据"
+                        : candidate.SourceType,
+                    SourceSummary = candidate.SourceSummary,
+                    Evidence = evidence
+                });
             }
-            if (!string.IsNullOrWhiteSpace(selectedValue))
-            {
-                MetadataCandidate selected = firstCandidates[selectedValue];
-                return new MetadataValue
-                {
-                    Value = selected.Value,
-                    Status = ConfidenceStatus.CodeEvidence,
-                    SourceType = "代码依据",
-                    SourceSummary = selected.SourceSummary,
-                    OriginalAutomaticValue = existing == null ? string.Empty : existing.Value,
-                    Evidence = selected.Evidence == null
-                        ? new List<EvidenceItem>()
-                        : new List<EvidenceItem> { selected.Evidence }
-                };
-            }
-            return existing;
+            return result;
+        }
+
+        /// <summary>XMZADD 20260915 识别唯一绑定物理字段的直接标题和 SQL 别名规则。</summary>
+        private static bool IsDirectNameRule(string ruleName)
+        {
+            return string.Equals(ruleName, "GridColumnCaption", StringComparison.Ordinal) ||
+                   string.Equals(ruleName, "DataColumnCaption", StringComparison.Ordinal) ||
+                   string.Equals(ruleName, "SqlColumnAlias", StringComparison.Ordinal) ||
+                   string.Equals(ruleName, "SqlFieldRelation", StringComparison.Ordinal) ||
+                   string.Equals(ruleName, "EntityFieldAssignment", StringComparison.Ordinal);
         }
 
         /// <summary>XMZADD 20260901 只清理自动数据库或源码名称中的等号表达，人工和锁定值保持原样。</summary>

@@ -72,6 +72,9 @@ namespace SHB.EosDataDictionary.Tests
 
                 Assert.AreEqual("数据库物料表", snapshot.Tables[0].ChineseName.Value);
                 Assert.AreEqual("人工模块", snapshot.Tables[0].ModuleName.Value);
+                Assert.AreEqual("物料主数据", snapshot.Tables[0].SuggestedChineseName.Value);
+                Assert.AreEqual(ConfidenceStatus.GuessedConflict,
+                    snapshot.Tables[0].SuggestedChineseName.Status);
             }
             finally
             {
@@ -199,11 +202,59 @@ namespace SHB.EosDataDictionary.Tests
             new BusinessDictionaryV1EnrichmentService().Enrich(
                 snapshot, new List<SourceEvidence>(), null);
 
-            Assert.AreEqual("编辑人姓名", snapshot.Tables[0].Fields[0].ChineseName.Value);
+            Assert.AreEqual(string.Empty, snapshot.Tables[0].Fields[0].ChineseName.Value);
+            Assert.AreEqual("编辑人姓名",
+                snapshot.Tables[0].Fields[0].SuggestedChineseName.Value);
             Assert.AreEqual("数据库文件仓ID", snapshot.Tables[0].Fields[1].ChineseName.Value);
             Assert.AreEqual(ConfidenceStatus.DatabaseEvidence, snapshot.Tables[0].Fields[1].ChineseName.Status);
             Assert.AreEqual("人工创建时间", snapshot.Tables[0].Fields[2].ChineseName.Value);
             Assert.AreEqual(ConfidenceStatus.Guessed, snapshot.Tables[0].Fields[2].ChineseName.Status);
+        }
+
+        /// <summary>XMZADD 20260915 验证后续业务上下文推断也必须经过最终名称准入而不能把单处弱证据写回正式列。</summary>
+        [TestMethod]
+        public void Enrich_SingleEntityNamingContext_RemainsSuggestionAfterFinalAdmission()
+        {
+            var snapshot = new SnapshotData
+            {
+                Tables = new List<TableMetadata>
+                {
+                    new TableMetadata
+                    {
+                        ObjectName = "Item_Image",
+                        Fields = new List<FieldMetadata>
+                        {
+                            new FieldMetadata { FieldName = "Img_Name" }
+                        }
+                    }
+                }
+            };
+            var evidence = new List<SourceEvidence>
+            {
+                new SourceEvidence
+                {
+                    ObjectName = "Item_Image",
+                    FieldName = "Img_Name",
+                    EntityName = "t_Item_Image",
+                    PropertyName = "f_Img_Name",
+                    Strength = SourceEvidenceStrength.Authoritative,
+                    Evidence = new EvidenceItem
+                    {
+                        SourceType = "EOS实体源码",
+                        SourcePath = "ERP/表-类定义/code_Item.vb",
+                        SourceLine = 120,
+                        RuleName = "EntityProperty",
+                        RawValue = "f_Img_Name",
+                        OriginalText = "Property f_Img_Name As String"
+                    }
+                }
+            };
+
+            new BusinessDictionaryV1EnrichmentService().Enrich(snapshot, evidence, null);
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.AreEqual(string.Empty, field.ChineseName.Value);
+            Assert.AreEqual("图片名称", field.SuggestedChineseName.Value);
         }
 
         /// <summary>XMZADD 20260903 创建第一版富化测试所需的最小业务快照。</summary>

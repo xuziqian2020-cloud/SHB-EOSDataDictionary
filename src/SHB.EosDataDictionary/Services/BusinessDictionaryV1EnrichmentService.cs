@@ -28,6 +28,8 @@ namespace SHB.EosDataDictionary.Services
             // 离线快照必须固化命名关系，确保共享字典无需打开详情页也拥有完整关联证据。
             LogicalRelationDiscoveryService.Discover(snapshot);
             new BusinessTableClassificationService().Classify(snapshot, sourceEvidence, knowledgeCatalog);
+            // 所有后置业务规则也必须经过同一准入门槛，避免弱代码候选重新占用正式名称列。
+            new BusinessNameLayerService().NormalizeSnapshot(snapshot);
         }
 
         /// <summary>XMZADD 20260903 将表索引和核心字段精确结论合并到普通推测之上，同时保护人工及数据库依据。</summary>
@@ -37,6 +39,7 @@ namespace SHB.EosDataDictionary.Services
             {
                 return;
             }
+            var nameLayer = new BusinessNameLayerService();
             for (int tableIndex = 0; tableIndex < snapshot.Tables.Count; tableIndex++)
             {
                 TableMetadata table = snapshot.Tables[tableIndex];
@@ -47,12 +50,13 @@ namespace SHB.EosDataDictionary.Services
                 EosKnowledgeTableEntry tableEntry = knowledgeCatalog.FindTable(table.ObjectName);
                 if (tableEntry != null)
                 {
-                    if (MetadataEvidencePolicy.CanReplace(table.ChineseName, ConfidenceStatus.KnowledgeBaseEvidence, "ExactProjectTable"))
+                    if (IdentifierTranslationService.IsReliableChineseName(tableEntry.ChineseName))
                     {
-                        table.ChineseName = CreateKnowledgeValue(
+                        // 精确知识与既有数据库或代码结论不一致时必须进入冲突候选，不能被优先级判断静默丢弃。
+                        nameLayer.ApplyTableCandidate(table, CreateKnowledgeValue(
                             tableEntry.ChineseName, tableEntry.RelativePath, tableEntry.LineNumber,
                             "ExactProjectTable", tableEntry.TableName + "=" + tableEntry.ChineseName,
-                            "EOS 项目表索引精确条目");
+                            "EOS 项目表索引精确条目"));
                     }
                     if (MetadataEvidencePolicy.CanReplace(table.ModuleName, ConfidenceStatus.KnowledgeBaseEvidence, "ProjectModuleHeading"))
                     {
@@ -87,13 +91,13 @@ namespace SHB.EosDataDictionary.Services
                     {
                         continue;
                     }
-                    if (MetadataEvidencePolicy.CanReplace(field.ChineseName, ConfidenceStatus.KnowledgeBaseEvidence, "ExactProjectField") &&
-                        IdentifierTranslationService.IsReliableChineseName(fieldEntry.ChineseName))
+                    if (IdentifierTranslationService.IsReliableChineseName(fieldEntry.ChineseName))
                     {
-                        field.ChineseName = CreateKnowledgeValue(
+                        // 字段精确知识同样保留为可审阅候选，防止受保护正式名遮蔽新的业务依据。
+                        nameLayer.ApplyFieldCandidate(field, CreateKnowledgeValue(
                             fieldEntry.ChineseName, fieldEntry.RelativePath, fieldEntry.LineNumber,
                             "ExactProjectField", field.FieldName + "=" + fieldEntry.ChineseName,
-                            "EOS 项目核心字段字典精确条目");
+                            "EOS 项目核心字段字典精确条目"));
                     }
                     ApplyKnowledgeEnum(field, fieldEntry);
                 }

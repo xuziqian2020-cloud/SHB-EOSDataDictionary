@@ -215,6 +215,34 @@ namespace SHB.EosDataDictionary.Tests
                 database, "货主公司ID", 94, 3, "GridColumnCaption"));
         }
 
+        /// <summary>XMZADD 20260915 验证只有人工、可靠数据库注释和精确知识条目属于自动流水线必须保护的正式名称。</summary>
+        [TestMethod]
+        public void IsAuthoritativeBusinessName_DistinguishesFormalAndReferenceValues()
+        {
+            MetadataValue manual = CreateValue(ConfidenceStatus.LocalOverride, "ManualEdit");
+            manual.Value = "Manual English Name";
+            manual.IsManualOverride = true;
+            MetadataValue database = CreateValue(ConfidenceStatus.DatabaseEvidence, "DatabaseComment");
+            database.Value = "货主公司ID";
+            MetadataValue weakDatabase = CreateValue(ConfidenceStatus.DatabaseEvidence, "DatabaseComment");
+            weakDatabase.Value = "Owner_Company_ID";
+            MetadataValue exactKnowledge = CreateValue(
+                ConfidenceStatus.KnowledgeBaseEvidence, "ExactProjectField");
+            exactKnowledge.Value = "货主公司ID";
+            MetadataValue genericKnowledge = CreateValue(
+                ConfidenceStatus.KnowledgeBaseEvidence, "CommonFieldGlossary");
+            genericKnowledge.Value = "公司ID";
+            MetadataValue translation = CreateValue(ConfidenceStatus.Guessed, "IdentifierTranslation");
+            translation.Value = "公司ID";
+
+            Assert.IsTrue(MetadataEvidencePolicy.IsAuthoritativeBusinessName(manual));
+            Assert.IsTrue(MetadataEvidencePolicy.IsAuthoritativeBusinessName(database));
+            Assert.IsFalse(MetadataEvidencePolicy.IsAuthoritativeBusinessName(weakDatabase));
+            Assert.IsTrue(MetadataEvidencePolicy.IsAuthoritativeBusinessName(exactKnowledge));
+            Assert.IsFalse(MetadataEvidencePolicy.IsAuthoritativeBusinessName(genericKnowledge));
+            Assert.IsFalse(MetadataEvidencePolicy.IsAuthoritativeBusinessName(translation));
+        }
+
         /// <summary>XMZADD 20260903 创建包含单条规则证据的测试元数据值。</summary>
         private static MetadataValue CreateValue(ConfidenceStatus status, string ruleName)
         {

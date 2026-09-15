@@ -87,7 +87,15 @@ namespace SHB.EosDataDictionary.Services
             {
                 return;
             }
-            string value = current == null || string.IsNullOrWhiteSpace(current.Value) ? translation.Value : current.Value;
+            MetadataValue referenceName = current;
+            if (referenceName == null || string.IsNullOrWhiteSpace(referenceName.Value))
+            {
+                // 正式名为空时沿用已有参考译名中的未知缩写，避免分层后丢失可供共享词典替换的业务文本。
+                referenceName = field == null ? table.SuggestedChineseName : field.SuggestedChineseName;
+            }
+            string value = referenceName == null || string.IsNullOrWhiteSpace(referenceName.Value)
+                ? translation.Value
+                : referenceName.Value;
             bool changed = false;
             for (int tokenIndex = 0; tokenIndex < translation.UnknownTokens.Count && inferenceCount < MaximumInferenceCount; tokenIndex++)
             {
@@ -138,18 +146,19 @@ namespace SHB.EosDataDictionary.Services
                 ConfidenceScore = 60,
                 SourceType = "缩写与AI推测",
                 SourceSummary = "结构维护受限推理，等待人工确认",
-                OriginalAutomaticValue = current == null ? string.Empty : current.Value,
                 IsManualOverride = false,
                 IsLocked = false,
                 Evidence = new List<EvidenceItem>()
             };
             if (field == null)
             {
-                table.ChineseName = inferred;
+                // 缩写和 AI 仍属于参考译名，必须经过统一名称准入而不能直接占用正式名称。
+                new BusinessNameLayerService().ApplyTableCandidate(table, inferred);
             }
             else
             {
-                field.ChineseName = inferred;
+                // 缩写和 AI 仍属于参考译名，必须经过统一名称准入而不能直接占用正式名称。
+                new BusinessNameLayerService().ApplyFieldCandidate(field, inferred);
             }
         }
 

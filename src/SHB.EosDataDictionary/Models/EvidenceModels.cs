@@ -69,16 +69,27 @@ namespace SHB.EosDataDictionary.Models
 
         /// <summary>XMZADD 20260901 创建带原始证据的名称候选，使等号清理不丢失审阅依据。</summary>
         public MetadataCandidate(string value, ConfidenceStatus status, string sourceSummary, EvidenceItem evidence)
+            : this(value, status, sourceSummary, evidence, 0, null)
+        {
+        }
+
+        /// <summary>XMZADD 20260915 创建保留源码分级的名称候选，使权威 XML 摘要不会在富化边界降级。</summary>
+        public MetadataCandidate(string value, ConfidenceStatus status, string sourceSummary,
+            EvidenceItem evidence, int confidenceScore, string sourceType)
         {
             Value = value;
             Status = status;
             SourceSummary = sourceSummary;
             Evidence = evidence;
+            ConfidenceScore = confidenceScore;
+            SourceType = sourceType;
         }
 
         public string Value { get; private set; }
         public ConfidenceStatus Status { get; private set; }
         public string SourceSummary { get; private set; }
         public EvidenceItem Evidence { get; private set; }
+        public int ConfidenceScore { get; private set; }
+        public string SourceType { get; private set; }
     }
 }

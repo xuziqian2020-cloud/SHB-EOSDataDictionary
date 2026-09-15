@@ -96,7 +96,9 @@ namespace SHB.EosDataDictionary.Tests
                 TableMetadata item = FindTable(output, "Item");
                 Assert.AreEqual("物料主数据", item.ChineseName.Value);
                 Assert.AreEqual("t_Item", item.EntityName.Value);
-                Assert.AreEqual("金蝶编码", FindField(item, "KisNumber").ChineseName.Value);
+                Assert.AreEqual(string.Empty, FindField(item, "KisNumber").ChineseName.Value);
+                Assert.AreEqual("金蝶编码",
+                    FindField(item, "KisNumber").SuggestedChineseName.Value);
                 Assert.AreEqual("非托盘出入库流水账", FindTable(output, "Account_Pallet_FA_Not_IO").ChineseName.Value);
                 Assert.AreEqual("仓储", FindTable(output, "Account_Pallet_FA_Not_IO").ModuleName.Value);
                 Assert.AreEqual("财务流水账", FindTable(output, "DA_Account").ChineseName.Value);
