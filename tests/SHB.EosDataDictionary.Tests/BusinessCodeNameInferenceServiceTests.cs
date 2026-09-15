@@ -386,6 +386,130 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsTrue(ContainsEvidenceRule(ambiguousEvidence, "GridColumnCaptionConflict"));
         }
 
+        /// <summary>XMZADD 20260914 验证 SQL 直接列中文别名参与字段命名并保留真实来源分类。</summary>
+        [TestMethod]
+        public void Apply_SqlColumnAlias_UsesCaptionAndPreservesSourceType()
+        {
+            SnapshotData snapshot = CreateAcceptanceSnapshot("公司ID", ConfidenceStatus.DatabaseEvidence);
+            var evidence = new List<SourceEvidence>
+            {
+                CreateDetailedEvidence("DA_Acceptance", null, "EntityClassConvention",
+                    "ERP/表-类定义/code_DA.vb", 300, null, null, null),
+                CreateDetailedEvidence("DA_Acceptance", "Owner_Company_ID", "EntityProperty",
+                    "ERP/表-类定义/code_DA.vb", 321, null, null, null),
+                CreateDetailedEvidence("DA_Acceptance", "Owner_Company_ID", "SqlColumnAlias",
+                    "ERP/DA/AcceptanceQuery.vb", 42, "货主公司ID", null, null)
+            };
+            evidence[2].Strength = SourceEvidenceStrength.DirectBusinessCode;
+            evidence[2].UsageKind = SourceUsageKind.Display;
+            evidence[2].Evidence.SourceType = "EOS业务源码";
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.AreEqual("货主公司ID", field.ChineseName.Value);
+            Assert.AreEqual("SqlColumnAlias", field.ChineseName.Evidence[0].RuleName);
+            Assert.AreEqual("EOS业务源码", field.ChineseName.Evidence[0].SourceType);
+            StringAssert.Contains(field.Usage.Value, "界面展示");
+        }
+
+        /// <summary>XMZADD 20260914 验证两个独立业务文件的一致 SQL 别名保留双份证据并提升可信分数。</summary>
+        [TestMethod]
+        public void Apply_SqlColumnAlias_TwoIndependentFiles_RaisesConfidence()
+        {
+            SnapshotData snapshot = CreateAcceptanceSnapshot("旧推测", ConfidenceStatus.Guessed);
+            var evidence = new List<SourceEvidence>
+            {
+                CreateDetailedEvidence("DA_Acceptance", "Owner_Company_ID", "SqlColumnAlias",
+                    "ERP/DA/AcceptanceQuery.vb", 42, "货主公司ID", null, null),
+                CreateDetailedEvidence("DA_Acceptance", "Owner_Company_ID", "SqlColumnAlias",
+                    "ERP/DA/AcceptanceExport.vb", 87, "货主公司ID", null, null)
+            };
+            evidence[0].Strength = SourceEvidenceStrength.DirectBusinessCode;
+            evidence[0].UsageKind = SourceUsageKind.Display;
+            evidence[1].Strength = SourceEvidenceStrength.DirectBusinessCode;
+            evidence[1].UsageKind = SourceUsageKind.Display;
+            evidence[0].Evidence.OriginalText =
+                "SELECT A.Owner_Company_ID AS 货主公司ID FROM DA_Acceptance A";
+            evidence[1].Evidence.OriginalText =
+                "SELECT D.Owner_Company_ID AS 货主公司ID FROM DA_Acceptance D WHERE D.Deleted=0";
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            Assert.AreEqual("货主公司ID", field.ChineseName.Value);
+            Assert.IsTrue(field.ChineseName.ConfidenceScore >= 90);
+            AssertEvidenceLocation(field.ChineseName.Evidence, "ERP/DA/AcceptanceQuery.vb", 42);
+            AssertEvidenceLocation(field.ChineseName.Evidence, "ERP/DA/AcceptanceExport.vb", 87);
+        }
+
+        /// <summary>XMZADD 20260915 验证复制到不同文件的相同 SQL 不会被误算为两份独立标题证据。</summary>
+        [TestMethod]
+        public void Apply_SqlColumnAlias_CopiedSqlAcrossFiles_DoesNotRaiseConfidence()
+        {
+            SnapshotData snapshot = CreateAcceptanceSnapshot("旧推测", ConfidenceStatus.Guessed);
+            var evidence = new List<SourceEvidence>
+            {
+                CreateDetailedEvidence("DA_Acceptance", "Owner_Company_ID", "SqlColumnAlias",
+                    "ERP/DA/AcceptanceQuery.vb", 42, "货主公司ID", null, null),
+                CreateDetailedEvidence("DA_Acceptance", "Owner_Company_ID", "SqlColumnAlias",
+                    "ERP/DA/AcceptanceQueryCopy.vb", 42, "货主公司ID", null, null)
+            };
+            const string copiedSql =
+                "SELECT A.Owner_Company_ID AS 货主公司ID FROM DA_Acceptance A";
+            for (int index = 0; index < evidence.Count; index++)
+            {
+                evidence[index].Strength = SourceEvidenceStrength.DirectBusinessCode;
+                evidence[index].UsageKind = SourceUsageKind.Display;
+                evidence[index].Evidence.OriginalText = copiedSql;
+            }
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            Assert.AreEqual("货主公司ID", snapshot.Tables[0].Fields[0].ChineseName.Value);
+            Assert.IsTrue(snapshot.Tables[0].Fields[0].ChineseName.ConfidenceScore < 90);
+        }
+
+        /// <summary>XMZADD 20260914 验证无表名 SQL 别名发生多表冲突时保留原证据强度和展示用途。</summary>
+        [TestMethod]
+        public void Apply_UnboundSqlColumnAliasConflict_PreservesClassification()
+        {
+            SnapshotData snapshot = CreateAcceptanceSnapshot("公司ID", ConfidenceStatus.DatabaseEvidence);
+            snapshot.Tables.Add(new TableMetadata
+            {
+                ObjectName = "Other_Acceptance",
+                ChineseName = new MetadataValue { Value = "其他承兑表", Status = ConfidenceStatus.CodeEvidence },
+                Fields = new List<FieldMetadata>
+                {
+                    new FieldMetadata
+                    {
+                        FieldName = "Owner_Company_ID",
+                        ChineseName = new MetadataValue { Value = "其他公司ID", Status = ConfidenceStatus.DatabaseEvidence }
+                    }
+                }
+            });
+            var evidence = new List<SourceEvidence>
+            {
+                CreateDetailedEvidence("DA_Acceptance", "Owner_Company_ID", "SqlFieldUsage",
+                    "ERP/DA/Ambiguous.vb", 10, null, null, null),
+                CreateDetailedEvidence("Other_Acceptance", "Owner_Company_ID", "SqlFieldUsage",
+                    "ERP/DA/Ambiguous.vb", 11, null, null, null),
+                CreateDetailedEvidence(null, "Owner_Company_ID", "SqlColumnAlias",
+                    "ERP/DA/Ambiguous.vb", 20, "货主公司ID", null, null)
+            };
+            evidence[2].Strength = SourceEvidenceStrength.DirectBusinessCode;
+            evidence[2].UsageKind = SourceUsageKind.Display;
+            evidence[2].Evidence.SourceType = "EOS业务源码";
+
+            new BusinessCodeNameInferenceService().Apply(snapshot, evidence);
+
+            SourceEvidence conflict = FindSourceEvidenceByRule(evidence, "SqlColumnAliasConflict");
+            Assert.IsNotNull(conflict);
+            Assert.AreEqual(SourceEvidenceStrength.DirectBusinessCode, conflict.Strength);
+            Assert.AreEqual(SourceUsageKind.Display, conflict.UsageKind);
+            Assert.AreEqual("EOS业务源码", conflict.Evidence.SourceType);
+        }
+
         /// <summary>XMZADD 20260905 验证仅有表实体证据时不改写未在实体中声明字段的既有稳定翻译。</summary>
         [TestMethod]
         public void Apply_UndeclaredField_PreservesExistingStableTranslation()
@@ -591,6 +715,20 @@ namespace SHB.EosDataDictionary.Tests
                 }
             }
             return false;
+        }
+
+        /// <summary>XMZADD 20260914 按规则返回一条源码证据以核对冲突分类传播。</summary>
+        private static SourceEvidence FindSourceEvidenceByRule(IList<SourceEvidence> evidence, string ruleName)
+        {
+            for (int index = 0; index < evidence.Count; index++)
+            {
+                if (evidence[index] != null && evidence[index].Evidence != null &&
+                    string.Equals(evidence[index].Evidence.RuleName, ruleName, StringComparison.Ordinal))
+                {
+                    return evidence[index];
+                }
+            }
+            return null;
         }
     }
 }

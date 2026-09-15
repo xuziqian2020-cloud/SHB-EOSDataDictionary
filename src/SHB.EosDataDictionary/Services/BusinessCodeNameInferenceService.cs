@@ -142,7 +142,8 @@ namespace SHB.EosDataDictionary.Services
         /// <summary>XMZADD 20260905 识别字段与中文界面标题的直接绑定规则。</summary>
         private static bool IsCaptionRule(string ruleName)
         {
-            return ruleName == "GridColumnCaption" || ruleName == "DataColumnCaption";
+            return ruleName == "GridColumnCaption" || ruleName == "DataColumnCaption" ||
+                   ruleName == "SqlColumnAlias";
         }
 
         /// <summary>XMZADD 20260905 将一条字段证据追加到大小写不敏感的表字段联合索引。</summary>
@@ -192,6 +193,8 @@ namespace SHB.EosDataDictionary.Services
                 FieldName = source.FieldName,
                 ModulePath = source.ModulePath,
                 BusinessIdentifierCandidate = source.FieldName,
+                Strength = source.Strength,
+                UsageKind = source.UsageKind,
                 Evidence = new EvidenceItem
                 {
                     SourceType = item.SourceType,
@@ -318,6 +321,12 @@ namespace SHB.EosDataDictionary.Services
                     int evidenceKindCount = CountSupportingEvidenceKinds(
                         specificEvidence, field.FieldName, semanticResult.Value);
                     int confidenceScore = CalculateAggregatedScore(semanticResult.ConfidenceScore, evidenceKindCount);
+                    if (CountIndependentCaptionSources(
+                            specificEvidence, field.FieldName, semanticResult.Value) >= 2)
+                    {
+                        // 两个独立业务文件给出相同标题时，可排除单个窗体偶然简写造成的低可信结论。
+                        confidenceScore = Math.Max(confidenceScore, 90);
+                    }
                     string directRuleName = GetHighestPrioritySupportingRule(
                         specificEvidence, field.FieldName, semanticResult.Value);
                     ApplyFieldValue(field, semanticResult.Value, confidenceScore, specificEvidence, entityEvidence,
@@ -507,6 +516,72 @@ namespace SHB.EosDataDictionary.Services
                 }
             }
             return kinds.Count;
+        }
+
+        /// <summary>XMZADD 20260914 统计给出同一字段标题的独立业务文件，避免同文件重复控件虚增可信度。</summary>
+        private static int CountIndependentCaptionSources(IList<SourceEvidence> evidence,
+            string fieldName, string candidate)
+        {
+            if (evidence == null || string.IsNullOrWhiteSpace(candidate))
+            {
+                return 0;
+            }
+            var sourcePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var sourceFingerprints = new HashSet<string>(StringComparer.Ordinal);
+            for (int index = 0; index < evidence.Count; index++)
+            {
+                SourceEvidence item = evidence[index];
+                if (item == null || item.Evidence == null ||
+                    !IsCaptionRule(item.Evidence.RuleName) ||
+                    string.IsNullOrWhiteSpace(item.Evidence.SourcePath))
+                {
+                    continue;
+                }
+                string caption = CompleteCaptionValue(item.ChineseNameCandidate, fieldName);
+                if (string.Equals(caption, candidate.Trim(), StringComparison.Ordinal))
+                {
+                    string fingerprint = BuildCaptionSourceFingerprint(item.Evidence);
+                    if (!sourcePaths.Contains(item.Evidence.SourcePath) &&
+                        !sourceFingerprints.Contains(fingerprint))
+                    {
+                        sourcePaths.Add(item.Evidence.SourcePath);
+                        sourceFingerprints.Add(fingerprint);
+                    }
+                }
+            }
+            return sourcePaths.Count;
+        }
+
+        /// <summary>XMZADD 20260915 归一化标题所在源码文本，防止复制到多个文件的同一 SQL 虚增独立证据数。</summary>
+        private static string BuildCaptionSourceFingerprint(EvidenceItem evidence)
+        {
+            string value = evidence == null ? string.Empty : evidence.OriginalText;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                value = evidence == null ? string.Empty : evidence.RawValue;
+            }
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "PATH:" + (evidence == null ? string.Empty : evidence.SourcePath ?? string.Empty).ToUpperInvariant();
+            }
+
+            var result = new StringBuilder();
+            bool pendingSpace = false;
+            for (int index = 0; index < value.Length; index++)
+            {
+                if (char.IsWhiteSpace(value[index]))
+                {
+                    pendingSpace = result.Length > 0;
+                    continue;
+                }
+                if (pendingSpace)
+                {
+                    result.Append(' ');
+                    pendingSpace = false;
+                }
+                result.Append(char.ToUpperInvariant(value[index]));
+            }
+            return result.ToString();
         }
 
         /// <summary>XMZADD 20260905 返回按优先级排序后第一条真正支持当前候选的业务证据规则。</summary>
@@ -728,7 +803,7 @@ namespace SHB.EosDataDictionary.Services
                     string originalRule = source.RuleName ?? string.Empty;
                     items.Add(new EvidenceItem
                     {
-                        SourceType = "EOS源码",
+                        SourceType = string.IsNullOrWhiteSpace(source.SourceType) ? "EOS源码" : source.SourceType,
                         SourcePath = source.SourcePath,
                         SourceLine = source.SourceLine,
                         RuleName = preserveSourceRuleNames ? originalRule : BusinessUsageRule,

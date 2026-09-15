@@ -53,6 +53,16 @@ namespace SHB.EosDataDictionary.Services
         private static readonly Regex SelectModifierOnlyRegex = new Regex(
             @"^(?:(?:DISTINCT|ALL)(?:\s+|$))?(?:TOP\s*(?:\(\s*[^)]+\s*\)|[0-9]+)\s*(?:PERCENT\s+)?(?:WITH\s+TIES\s*)?)?$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex SelectModifierPrefixRegex = new Regex(
+            @"^\s*(?:(?:DISTINCT|ALL)\s+)?(?:TOP\s*(?:\(\s*[^)]+\s*\)|[0-9]+)\s*(?:PERCENT\s+)?(?:WITH\s+TIES\s*)?)?",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex SelectKeywordOnlyRegex = new Regex(
+            @"\bSELECT\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex FromKeywordOnlyRegex = new Regex(
+            @"\bFROM\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex DirectSelectFieldRegex = new Regex(
+            @"^(?:(?<alias>\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?(?<field>\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex SqlCteNameRegex = new Regex(
             @"(?:\bWITH|,)\s*(?<name>\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\)\s*)?AS\s*\(",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -70,6 +80,15 @@ namespace SHB.EosDataDictionary.Services
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex VariableCaptionRegex = new Regex(
             @"\b(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*Caption\s*=\s*""(?<caption>[^""]+)""",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ResourceFieldCaptionRegex = new Regex(
+            @"\.\s*(?<collection>Cols|Columns)\s*\(\s*""(?<field>[^""]+)""\s*\)\s*\.\s*Caption\s*=\s*(?<expression>GetResourceText\s*\([^\r\n]*\))",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ResourceVariableCaptionRegex = new Regex(
+            @"\b(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*Caption\s*=\s*(?<expression>GetResourceText\s*\([^\r\n]*\))",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ResourceFallbackRegex = new Regex(
+            @"GetResourceText\s*\(\s*[^,\r\n]+,\s*(?:""(?<doubleCaption>[^""]*[\u4e00-\u9fff][^""]*)""|'(?<singleCaption>[^']*[\u4e00-\u9fff][^']*)')\s*\)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex IdentifierRegex = new Regex(
             @"\[?(?<identifier>[A-Za-z_][A-Za-z0-9_]*)\]?",
@@ -247,12 +266,16 @@ namespace SHB.EosDataDictionary.Services
                     }
                 }
 
-                string blockText = NormalizeVisualBasicSqlText(text.ToString());
+                string aliasText = NormalizeVisualBasicSqlText(text.ToString());
                 // SQL 常量只是筛选值，屏蔽后可避免状态文本和模糊查询内容伪造成物理字段。
-                blockText = MaskSqlSingleQuotedLiterals(blockText);
+                string blockText = MaskSqlSingleQuotedLiterals(aliasText);
+                bool[] commentCharacters = BuildSqlCommentCharacterMap(blockText);
+                // SQL 注释不参与物理表归属，但必须等长屏蔽以保持源码证据行号准确。
+                blockText = MaskCharactersPreservingLines(blockText, commentCharacters);
+                aliasText = MaskCharactersPreservingLines(aliasText, commentCharacters);
                 if (SqlKeywordRegex.IsMatch(blockText))
                 {
-                    result.Add(new SqlBlock(startLineIndex, endLineIndex, blockText));
+                    result.Add(new SqlBlock(startLineIndex, endLineIndex, blockText, aliasText));
                 }
                 lineIndex = endLineIndex + 1;
             }
@@ -273,6 +296,9 @@ namespace SHB.EosDataDictionary.Services
             {
                 return;
             }
+
+            ExtractSqlColumnAliases(sourcePath, modulePath, lines, block, cteNames, fieldOwners,
+                result, deduplicationKeys);
 
             // 写目标必须先于通用字段引用进入去重集合，避免 UPDATE 左值被同一语句中的读取证据覆盖。
             ExtractInsertFields(sourcePath, modulePath, lines, block, fieldOwners, result, deduplicationKeys);
@@ -377,6 +403,547 @@ namespace SHB.EosDataDictionary.Services
                     cteNames.Add(cteName);
                 }
             }
+        }
+
+        /// <summary>XMZADD 20260914 按每个 SELECT 独立作用域把直接列中文别名映射到唯一物理字段。</summary>
+        private static void ExtractSqlColumnAliases(string sourcePath, string modulePath, string[] lines,
+            SqlBlock block, ISet<string> cteNames, IDictionary<string, HashSet<string>> fieldOwners,
+            IList<SourceEvidence> result, ISet<string> deduplicationKeys)
+        {
+            bool[] identifierCharacters = BuildSqlIdentifierCharacterMap(block.Text);
+            int[] parenthesisDepths = BuildParenthesisDepthMap(block.Text, identifierCharacters);
+            MatchCollection selectMatches = SelectKeywordOnlyRegex.Matches(block.Text);
+            MatchCollection fromMatches = FromKeywordOnlyRegex.Matches(block.Text);
+            for (int selectIndex = 0; selectIndex < selectMatches.Count; selectIndex++)
+            {
+                Match selectMatch = selectMatches[selectIndex];
+                if (identifierCharacters[selectMatch.Index])
+                {
+                    continue;
+                }
+                int selectDepth = parenthesisDepths[selectMatch.Index];
+                int fromIndex = FindFollowingFromAtDepth(
+                    fromMatches, selectMatch.Index + selectMatch.Length, selectDepth, parenthesisDepths,
+                    identifierCharacters);
+                if (fromIndex < 0)
+                {
+                    continue;
+                }
+
+                int scopeEnd = FindSelectSourceEnd(block.Text, fromIndex + 4, selectDepth,
+                    parenthesisDepths, identifierCharacters);
+                SelectSourceContext sourceContext = BuildSelectSourceContext(
+                    block.Text, fromIndex, scopeEnd, selectDepth, parenthesisDepths,
+                    identifierCharacters, cteNames);
+                IList<ProjectionSegment> segments = SplitSelectProjection(
+                    block.AliasText, selectMatch.Index + selectMatch.Length, fromIndex,
+                    selectDepth, parenthesisDepths);
+                for (int segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
+                {
+                    ExtractSqlColumnAlias(sourcePath, modulePath, lines, block, segments[segmentIndex],
+                        sourceContext, fieldOwners, result, deduplicationKeys);
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260914 解析一个投影项且只让完整单列表达式形成物理字段命名证据。</summary>
+        private static void ExtractSqlColumnAlias(string sourcePath, string modulePath, string[] lines,
+            SqlBlock block, ProjectionSegment segment, SelectSourceContext sourceContext,
+            IDictionary<string, HashSet<string>> fieldOwners, IList<SourceEvidence> result,
+            ISet<string> deduplicationKeys)
+        {
+            string expression;
+            string chineseAlias;
+            int expressionOffset;
+            int aliasOffset;
+            if (!TrySplitChineseSelectAlias(segment.Text, out expression, out chineseAlias,
+                    out expressionOffset, out aliasOffset))
+            {
+                return;
+            }
+
+            Match fieldMatch = DirectSelectFieldRegex.Match(expression);
+            string tableName = null;
+            string fieldName = null;
+            if (fieldMatch.Success)
+            {
+                fieldName = NormalizeIdentifier(fieldMatch.Groups["field"].Value);
+                string qualifier = NormalizeIdentifier(fieldMatch.Groups["alias"].Value);
+                if (!string.IsNullOrWhiteSpace(qualifier))
+                {
+                    if (!sourceContext.AmbiguousAliases.Contains(qualifier))
+                    {
+                        sourceContext.Aliases.TryGetValue(qualifier, out tableName);
+                    }
+                }
+                else if (!sourceContext.HasAmbiguousUnqualifiedSource && sourceContext.Tables.Count == 1)
+                {
+                    tableName = GetOnlyValue(sourceContext.Tables);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(tableName) && !string.IsNullOrWhiteSpace(fieldName))
+            {
+                AddFieldOwner(fieldOwners, fieldName, tableName);
+                int fieldCharacterIndex = segment.StartIndex + expressionOffset +
+                                          fieldMatch.Groups["field"].Index;
+                int sourceLine = GetSourceLine(block, fieldCharacterIndex);
+                AddEvidence(result, deduplicationKeys, tableName, fieldName, null, modulePath,
+                    chineseAlias, fieldName, sourcePath, sourceLine, "SqlColumnAlias", segment.Text,
+                    GetOriginalLine(lines, sourceLine),
+                    "SELECT 直接列与中文输出别名在同一作用域唯一绑定，可作为物理字段业务名称证据。",
+                    usageKind: SourceUsageKind.Display,
+                    strength: SourceEvidenceStrength.DirectBusinessCode);
+                return;
+            }
+
+            // 派生或无法唯一归属的显示列只留审计，不得把标题回写到参与表达式的任一物理字段。
+            int aliasSourceLine = GetSourceLine(block, segment.StartIndex + aliasOffset);
+            AddEvidence(result, deduplicationKeys, null, null, null, modulePath, null,
+                chineseAlias, sourcePath, aliasSourceLine, "SqlDerivedColumnAlias", segment.Text,
+                GetOriginalLine(lines, aliasSourceLine),
+                "SELECT 输出别名来自计算表达式、逻辑结果集或歧义作用域，仅保留派生显示列审计。",
+                usageKind: SourceUsageKind.Display,
+                strength: SourceEvidenceStrength.Contextual);
+        }
+
+        /// <summary>XMZADD 20260914 建立 SQL 每个字符前的括号深度以隔离 CTE、子查询和外层查询。</summary>
+        private static int[] BuildParenthesisDepthMap(string sqlText, bool[] identifierCharacters)
+        {
+            string value = sqlText ?? string.Empty;
+            var result = new int[value.Length + 1];
+            int depth = 0;
+            for (int index = 0; index < value.Length; index++)
+            {
+                result[index] = depth;
+                if (identifierCharacters[index])
+                {
+                    continue;
+                }
+                char character = value[index];
+                if (character == '(')
+                {
+                    depth++;
+                }
+                else if (character == ')' && depth > 0)
+                {
+                    depth--;
+                }
+            }
+            result[value.Length] = depth;
+            return result;
+        }
+
+        /// <summary>XMZADD 20260914 标记方括号和双引号标识符字符，防止其中的关键字改变查询作用域。</summary>
+        private static bool[] BuildSqlIdentifierCharacterMap(string sqlText)
+        {
+            string value = sqlText ?? string.Empty;
+            var result = new bool[value.Length];
+            bool insideBracket = false;
+            bool insideDoubleQuote = false;
+            for (int index = 0; index < value.Length; index++)
+            {
+                char character = value[index];
+                if (insideBracket)
+                {
+                    result[index] = true;
+                    if (character == ']' && index + 1 < value.Length && value[index + 1] == ']')
+                    {
+                        result[index + 1] = true;
+                        index++;
+                    }
+                    else if (character == ']')
+                    {
+                        insideBracket = false;
+                    }
+                    continue;
+                }
+                if (insideDoubleQuote)
+                {
+                    result[index] = true;
+                    if (character == '"' && index + 1 < value.Length && value[index + 1] == '"')
+                    {
+                        result[index + 1] = true;
+                        index++;
+                    }
+                    else if (character == '"')
+                    {
+                        insideDoubleQuote = false;
+                    }
+                    continue;
+                }
+                if (character == '[')
+                {
+                    result[index] = true;
+                    insideBracket = true;
+                }
+                else if (character == '"')
+                {
+                    result[index] = true;
+                    insideDoubleQuote = true;
+                }
+            }
+            return result;
+        }
+
+        /// <summary>XMZADD 20260914 查找当前 SELECT 同括号层级的 FROM，避免读取嵌套查询来源。</summary>
+        private static int FindFollowingFromAtDepth(MatchCollection fromMatches, int startIndex,
+            int selectDepth, int[] parenthesisDepths, bool[] identifierCharacters)
+        {
+            for (int index = 0; index < fromMatches.Count; index++)
+            {
+                Match match = fromMatches[index];
+                if (match.Index >= startIndex && !identifierCharacters[match.Index] &&
+                    parenthesisDepths[match.Index] == selectDepth)
+                {
+                    return match.Index;
+                }
+            }
+            return -1;
+        }
+
+        /// <summary>XMZADD 20260914 定位当前 SELECT 来源子句边界，使表别名只在自身查询作用域生效。</summary>
+        private static int FindSelectSourceEnd(string sqlText, int startIndex, int selectDepth,
+            int[] parenthesisDepths, bool[] identifierCharacters)
+        {
+            string value = sqlText ?? string.Empty;
+            string[] boundaryKeywords =
+            {
+                "WHERE", "GROUP", "HAVING", "ORDER", "UNION", "EXCEPT", "INTERSECT", "OPTION", "FOR"
+            };
+            for (int index = startIndex; index < value.Length; index++)
+            {
+                if (identifierCharacters[index] || parenthesisDepths[index] != selectDepth)
+                {
+                    continue;
+                }
+                if (value[index] == ')' || value[index] == ';')
+                {
+                    return index;
+                }
+                for (int keywordIndex = 0; keywordIndex < boundaryKeywords.Length; keywordIndex++)
+                {
+                    if (IsSqlKeywordAt(value, index, boundaryKeywords[keywordIndex]))
+                    {
+                        return index;
+                    }
+                }
+            }
+            return value.Length;
+        }
+
+        /// <summary>XMZADD 20260914 收集单个 SELECT 来源范围内的物理表与无歧义别名映射。</summary>
+        private static SelectSourceContext BuildSelectSourceContext(string sqlText, int fromIndex,
+            int scopeEnd, int selectDepth, int[] parenthesisDepths, bool[] identifierCharacters,
+            ISet<string> cteNames)
+        {
+            var context = new SelectSourceContext();
+            int length = Math.Max(0, scopeEnd - fromIndex);
+            string sourceText = (sqlText ?? string.Empty).Substring(fromIndex, length);
+            MatchCollection tableMatches = SqlTableReferenceRegex.Matches(sourceText);
+            for (int matchIndex = 0; matchIndex < tableMatches.Count; matchIndex++)
+            {
+                Match match = tableMatches[matchIndex];
+                int absoluteIndex = fromIndex + match.Index;
+                int clauseIndex = fromIndex + match.Groups["clause"].Index;
+                if (identifierCharacters[clauseIndex] || parenthesisDepths[absoluteIndex] != selectDepth)
+                {
+                    continue;
+                }
+
+                string tableName = NormalizeIdentifier(match.Groups["table"].Value);
+                if (string.IsNullOrWhiteSpace(tableName) || IsSqlKeyword(tableName) ||
+                    IsUnknownSqlObject(tableName) || cteNames.Contains(tableName))
+                {
+                    context.HasAmbiguousUnqualifiedSource = true;
+                    continue;
+                }
+
+                context.Tables.Add(tableName);
+                AddSelectScopeAlias(context, tableName, tableName);
+                string alias = NormalizeIdentifier(match.Groups["alias"].Value);
+                if (!string.IsNullOrWhiteSpace(alias) && !IsSqlKeyword(alias))
+                {
+                    AddSelectScopeAlias(context, alias, tableName);
+                }
+            }
+
+            if (ContainsCommaAtDepth(sqlText, fromIndex, scopeEnd, selectDepth, parenthesisDepths))
+            {
+                // 旧式逗号联表的完整来源不一定能被表正则还原，裸字段在该作用域必须保持保守。
+                context.HasAmbiguousUnqualifiedSource = true;
+            }
+            return context;
+        }
+
+        /// <summary>XMZADD 20260914 添加作用域别名并在同层别名指向多表时标记不可采信。</summary>
+        private static void AddSelectScopeAlias(SelectSourceContext context, string alias, string tableName)
+        {
+            if (context.AmbiguousAliases.Contains(alias))
+            {
+                return;
+            }
+            string existing;
+            if (context.Aliases.TryGetValue(alias, out existing) &&
+                !string.Equals(existing, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                context.Aliases.Remove(alias);
+                context.AmbiguousAliases.Add(alias);
+                return;
+            }
+            context.Aliases[alias] = tableName;
+        }
+
+        /// <summary>XMZADD 20260914 判断来源子句同层是否含旧式逗号联表，阻止裸字段误归属。</summary>
+        private static bool ContainsCommaAtDepth(string sqlText, int startIndex, int endIndex,
+            int selectDepth, int[] parenthesisDepths)
+        {
+            string value = sqlText ?? string.Empty;
+            int maximum = Math.Min(value.Length, endIndex);
+            for (int index = Math.Max(0, startIndex); index < maximum; index++)
+            {
+                if (value[index] == ',' && parenthesisDepths[index] == selectDepth)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>XMZADD 20260914 按顶层逗号拆分 SELECT 投影且保留每项在逻辑 SQL 中的绝对位置。</summary>
+        private static IList<ProjectionSegment> SplitSelectProjection(string sqlText, int startIndex,
+            int endIndex, int selectDepth, int[] parenthesisDepths)
+        {
+            var result = new List<ProjectionSegment>();
+            string value = sqlText ?? string.Empty;
+            int segmentStart = startIndex;
+            bool insideBracket = false;
+            bool insideSingleQuote = false;
+            bool insideDoubleQuote = false;
+            for (int index = startIndex; index <= endIndex; index++)
+            {
+                bool atEnd = index == endIndex;
+                if (!atEnd)
+                {
+                    char character = value[index];
+                    if (insideSingleQuote)
+                    {
+                        if (character == '\'' && index + 1 < endIndex && value[index + 1] == '\'')
+                        {
+                            index++;
+                            continue;
+                        }
+                        if (character == '\'')
+                        {
+                            insideSingleQuote = false;
+                        }
+                        continue;
+                    }
+                    if (insideDoubleQuote)
+                    {
+                        if (character == '"')
+                        {
+                            insideDoubleQuote = false;
+                        }
+                        continue;
+                    }
+                    if (insideBracket)
+                    {
+                        if (character == ']')
+                        {
+                            insideBracket = false;
+                        }
+                        continue;
+                    }
+                    if (character == '\'')
+                    {
+                        insideSingleQuote = true;
+                        continue;
+                    }
+                    if (character == '"')
+                    {
+                        insideDoubleQuote = true;
+                        continue;
+                    }
+                    if (character == '[')
+                    {
+                        insideBracket = true;
+                        continue;
+                    }
+                }
+
+                if (atEnd || (value[index] == ',' && parenthesisDepths[index] == selectDepth))
+                {
+                    result.Add(new ProjectionSegment(segmentStart,
+                        value.Substring(segmentStart, index - segmentStart)));
+                    segmentStart = index + 1;
+                }
+            }
+            return result;
+        }
+
+        /// <summary>XMZADD 20260914 从投影项尾部解析显式或隐式中文别名并保留源表达式偏移。</summary>
+        private static bool TrySplitChineseSelectAlias(string segment, out string expression,
+            out string chineseAlias, out int expressionOffset, out int aliasOffset)
+        {
+            expression = null;
+            chineseAlias = null;
+            expressionOffset = 0;
+            aliasOffset = 0;
+            string value = segment ?? string.Empty;
+            int aliasEnd = value.Length - 1;
+            while (aliasEnd >= 0 && char.IsWhiteSpace(value[aliasEnd]))
+            {
+                aliasEnd--;
+            }
+            if (aliasEnd < 0)
+            {
+                return false;
+            }
+
+            int aliasStart = FindSelectAliasStart(value, aliasEnd);
+            if (aliasStart < 0)
+            {
+                return false;
+            }
+            string aliasValue = NormalizeSelectAlias(value.Substring(aliasStart, aliasEnd - aliasStart + 1));
+            if (!ContainsChineseCharacter(aliasValue))
+            {
+                return false;
+            }
+
+            int cursor = aliasStart - 1;
+            bool separatedByWhitespace = cursor >= 0 && char.IsWhiteSpace(value[cursor]);
+            while (cursor >= 0 && char.IsWhiteSpace(value[cursor]))
+            {
+                cursor--;
+            }
+            if (!separatedByWhitespace || cursor < 0)
+            {
+                return false;
+            }
+
+            int expressionEnd = cursor;
+            if (cursor >= 1 && (value[cursor] == 'S' || value[cursor] == 's') &&
+                (value[cursor - 1] == 'A' || value[cursor - 1] == 'a') &&
+                (cursor - 2 < 0 || !IsSqlIdentifierCharacter(value[cursor - 2])))
+            {
+                expressionEnd = cursor - 2;
+                while (expressionEnd >= 0 && char.IsWhiteSpace(value[expressionEnd]))
+                {
+                    expressionEnd--;
+                }
+            }
+            if (expressionEnd < 0)
+            {
+                return false;
+            }
+
+            int expressionStart = 0;
+            while (expressionStart <= expressionEnd && char.IsWhiteSpace(value[expressionStart]))
+            {
+                expressionStart++;
+            }
+            string rawExpression = value.Substring(expressionStart, expressionEnd - expressionStart + 1);
+            Match modifier = SelectModifierPrefixRegex.Match(rawExpression);
+            expressionStart += modifier.Length;
+            while (expressionStart <= expressionEnd && char.IsWhiteSpace(value[expressionStart]))
+            {
+                expressionStart++;
+            }
+            if (expressionStart > expressionEnd)
+            {
+                return false;
+            }
+
+            expression = value.Substring(expressionStart, expressionEnd - expressionStart + 1).TrimEnd();
+            chineseAlias = aliasValue;
+            expressionOffset = expressionStart;
+            aliasOffset = aliasStart;
+            return expression.Length > 0;
+        }
+
+        /// <summary>XMZADD 20260914 定位方括号、单双引号或普通 Unicode 输出别名的起点。</summary>
+        private static int FindSelectAliasStart(string value, int aliasEnd)
+        {
+            char endCharacter = value[aliasEnd];
+            char openingCharacter = '\0';
+            if (endCharacter == ']') openingCharacter = '[';
+            else if (endCharacter == '\'') openingCharacter = '\'';
+            else if (endCharacter == '"') openingCharacter = '"';
+            if (openingCharacter != '\0')
+            {
+                for (int index = aliasEnd - 1; index >= 0; index--)
+                {
+                    if (value[index] == openingCharacter)
+                    {
+                        return index;
+                    }
+                }
+                return -1;
+            }
+
+            if (!IsSelectAliasCharacter(endCharacter))
+            {
+                return -1;
+            }
+            int aliasStart = aliasEnd;
+            while (aliasStart > 0 && IsSelectAliasCharacter(value[aliasStart - 1]))
+            {
+                aliasStart--;
+            }
+            return aliasStart;
+        }
+
+        /// <summary>XMZADD 20260914 清除 SQL 输出别名包裹符并恢复常见引号转义。</summary>
+        private static string NormalizeSelectAlias(string value)
+        {
+            string result = (value ?? string.Empty).Trim();
+            if (result.Length >= 2 &&
+                ((result[0] == '[' && result[result.Length - 1] == ']') ||
+                 (result[0] == '\'' && result[result.Length - 1] == '\'') ||
+                 (result[0] == '"' && result[result.Length - 1] == '"')))
+            {
+                char wrapper = result[0];
+                result = result.Substring(1, result.Length - 2);
+                if (wrapper == '\'') result = result.Replace("''", "'");
+                if (wrapper == '"') result = result.Replace("\"\"", "\"");
+            }
+            return result.Trim();
+        }
+
+        /// <summary>XMZADD 20260914 判断未包裹输出别名可包含的 Unicode 字母、数字和下划线。</summary>
+        private static bool IsSelectAliasCharacter(char character)
+        {
+            return char.IsLetterOrDigit(character) || character == '_';
+        }
+
+        /// <summary>XMZADD 20260914 确认输出别名包含实际中文字符而非纯英文技术别名。</summary>
+        private static bool ContainsChineseCharacter(string value)
+        {
+            string text = value ?? string.Empty;
+            for (int index = 0; index < text.Length; index++)
+            {
+                if (text[index] >= '\u4e00' && text[index] <= '\u9fff')
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>XMZADD 20260914 按完整关键字边界判断当前字符位置，避免字段名片段误触发作用域结束。</summary>
+        private static bool IsSqlKeywordAt(string value, int index, string keyword)
+        {
+            if (index < 0 || index + keyword.Length > value.Length ||
+                string.Compare(value, index, keyword, 0, keyword.Length, StringComparison.OrdinalIgnoreCase) != 0)
+            {
+                return false;
+            }
+            bool validBefore = index == 0 || !IsSqlIdentifierCharacter(value[index - 1]);
+            int following = index + keyword.Length;
+            bool validAfter = following >= value.Length || !IsSqlIdentifierCharacter(value[following]);
+            return validBefore && validAfter;
         }
 
         /// <summary>XMZADD 20260904 提取 INSERT 目标列，使无别名写入字段仍保留实际表归属。</summary>
@@ -723,6 +1290,23 @@ namespace SHB.EosDataDictionary.Services
                         GetOriginalLine(originalLines, lineIndex + 1));
                 }
 
+                MatchCollection resourceFieldMatches = ResourceFieldCaptionRegex.Matches(line);
+                for (int matchIndex = 0; matchIndex < resourceFieldMatches.Count; matchIndex++)
+                {
+                    Match match = resourceFieldMatches[matchIndex];
+                    string caption;
+                    if (!TryGetResourceFallbackCaption(match.Groups["expression"].Value, out caption))
+                    {
+                        continue;
+                    }
+                    string fieldName = NormalizeIdentifier(match.Groups["field"].Value);
+                    string ruleName = string.Equals(match.Groups["collection"].Value, "Cols",
+                        StringComparison.OrdinalIgnoreCase) ? "GridColumnCaption" : "DataColumnCaption";
+                    AddCaptionEvidence(result, deduplicationKeys, fieldOwners, fieldName, caption,
+                        sourcePath, modulePath, lineIndex + 1, ruleName, match.Value,
+                        GetOriginalLine(originalLines, lineIndex + 1));
+                }
+
                 MatchCollection variableMatches = VariableCaptionRegex.Matches(line);
                 for (int matchIndex = 0; matchIndex < variableMatches.Count; matchIndex++)
                 {
@@ -736,7 +1320,39 @@ namespace SHB.EosDataDictionary.Services
                         match.Groups["caption"].Value.Trim(), sourcePath, modulePath, lineIndex + 1,
                         "DataColumnCaption", match.Value, GetOriginalLine(originalLines, lineIndex + 1));
                 }
+
+
+                MatchCollection resourceVariableMatches = ResourceVariableCaptionRegex.Matches(line);
+                for (int matchIndex = 0; matchIndex < resourceVariableMatches.Count; matchIndex++)
+                {
+                    Match match = resourceVariableMatches[matchIndex];
+                    string fieldName;
+                    string caption;
+                    if (!dataColumnFields.TryGetValue(match.Groups["variable"].Value, out fieldName) ||
+                        !TryGetResourceFallbackCaption(match.Groups["expression"].Value, out caption))
+                    {
+                        continue;
+                    }
+                    AddCaptionEvidence(result, deduplicationKeys, fieldOwners, fieldName, caption,
+                        sourcePath, modulePath, lineIndex + 1, "DataColumnCaption", match.Value,
+                        GetOriginalLine(originalLines, lineIndex + 1));
+                }
             }
+        }
+
+        /// <summary>XMZADD 20260914 只读取资源函数中显式存在的中文后备字面量，拒绝动态资源结果。</summary>
+        private static bool TryGetResourceFallbackCaption(string expression, out string caption)
+        {
+            caption = null;
+            Match match = ResourceFallbackRegex.Match(expression ?? string.Empty);
+            if (!match.Success)
+            {
+                return false;
+            }
+            caption = match.Groups["doubleCaption"].Success
+                ? match.Groups["doubleCaption"].Value.Trim()
+                : match.Groups["singleCaption"].Value.Trim();
+            return ContainsChineseCharacter(caption);
         }
 
         /// <summary>XMZADD 20260904 根据字段归属数量发布可靠标题或保留不可用于命名的冲突审计证据。</summary>
@@ -773,7 +1389,8 @@ namespace SHB.EosDataDictionary.Services
             string chineseNameCandidate, string businessIdentifierCandidate, string sourcePath,
             int sourceLine, string ruleName, string rawValue, string originalText, string explanation,
             string relationTargetObjectName = null, string relationTargetFieldName = null,
-            SourceUsageKind usageKind = SourceUsageKind.Unknown)
+            SourceUsageKind usageKind = SourceUsageKind.Unknown,
+            SourceEvidenceStrength strength = SourceEvidenceStrength.DirectBusinessCode)
         {
             string target = (relationTargetObjectName ?? string.Empty) + "." +
                             (relationTargetFieldName ?? string.Empty);
@@ -796,6 +1413,7 @@ namespace SHB.EosDataDictionary.Services
                 BusinessIdentifierCandidate = businessIdentifierCandidate,
                 RelationTargetObjectName = relationTargetObjectName,
                 RelationTargetFieldName = relationTargetFieldName,
+                Strength = strength,
                 UsageKind = usageKind,
                 Evidence = new EvidenceItem
                 {
@@ -1303,6 +1921,72 @@ namespace SHB.EosDataDictionary.Services
             return new string(characters);
         }
 
+        /// <summary>XMZADD 20260915 标记 SQL 行注释和块注释，使注释内的表名与别名不能成为业务证据。</summary>
+        private static bool[] BuildSqlCommentCharacterMap(string sqlText)
+        {
+            string value = sqlText ?? string.Empty;
+            var result = new bool[value.Length];
+            bool insideLineComment = false;
+            bool insideBlockComment = false;
+            for (int index = 0; index < value.Length; index++)
+            {
+                char character = value[index];
+                if (insideLineComment)
+                {
+                    if (character == '\r' || character == '\n')
+                    {
+                        insideLineComment = false;
+                    }
+                    else
+                    {
+                        result[index] = true;
+                    }
+                    continue;
+                }
+                if (insideBlockComment)
+                {
+                    result[index] = true;
+                    if (character == '*' && index + 1 < value.Length && value[index + 1] == '/')
+                    {
+                        result[index + 1] = true;
+                        index++;
+                        insideBlockComment = false;
+                    }
+                    continue;
+                }
+                if (character == '-' && index + 1 < value.Length && value[index + 1] == '-')
+                {
+                    result[index] = true;
+                    result[index + 1] = true;
+                    index++;
+                    insideLineComment = true;
+                }
+                else if (character == '/' && index + 1 < value.Length && value[index + 1] == '*')
+                {
+                    result[index] = true;
+                    result[index + 1] = true;
+                    index++;
+                    insideBlockComment = true;
+                }
+            }
+            return result;
+        }
+
+        /// <summary>XMZADD 20260915 按字符掩码等长清除 SQL 注释并保留换行位置用于证据定位。</summary>
+        private static string MaskCharactersPreservingLines(string value, bool[] characterMask)
+        {
+            char[] characters = (value ?? string.Empty).ToCharArray();
+            int maximum = Math.Min(characters.Length, characterMask == null ? 0 : characterMask.Length);
+            for (int index = 0; index < maximum; index++)
+            {
+                if (characterMask[index] && characters[index] != '\r' && characters[index] != '\n')
+                {
+                    characters[index] = ' ';
+                }
+            }
+            return new string(characters);
+        }
+
         /// <summary>XMZADD 20260905 判断字符能否成为未加方括号 SQL 标识符的一部分。</summary>
         private static bool IsSqlIdentifierCharacter(char character)
         {
@@ -1371,17 +2055,49 @@ namespace SHB.EosDataDictionary.Services
             return null;
         }
 
-        /// <summary>XMZADD 20260904 保存受三十二行约束的 SQL 逻辑窗口及其源码位置。</summary>
+        /// <summary>XMZADD 20260914 保存一个 SELECT 来源作用域内无歧义的物理表和别名。</summary>
+        private sealed class SelectSourceContext
+        {
+            /// <summary>XMZADD 20260914 初始化大小写不敏感的作用域映射，避免 SQL 大小写差异影响归属。</summary>
+            public SelectSourceContext()
+            {
+                Aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                AmbiguousAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                Tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            public IDictionary<string, string> Aliases { get; private set; }
+            public ISet<string> AmbiguousAliases { get; private set; }
+            public ISet<string> Tables { get; private set; }
+            public bool HasAmbiguousUnqualifiedSource { get; set; }
+        }
+
+        /// <summary>XMZADD 20260914 保存单个 SELECT 投影项文本及其在逻辑 SQL 中的位置。</summary>
+        private sealed class ProjectionSegment
+        {
+            /// <summary>XMZADD 20260914 创建可映射回原始源码行的投影项。</summary>
+            public ProjectionSegment(int startIndex, string text)
+            {
+                StartIndex = startIndex;
+                Text = text ?? string.Empty;
+            }
+
+            public int StartIndex { get; private set; }
+            public string Text { get; private set; }
+        }
+
+        /// <summary>XMZADD 20260914 保存受三十二行约束的 SQL 逻辑窗口、别名原文及源码位置。</summary>
         private sealed class SqlBlock
         {
             private readonly IList<int> lineStartCharacterIndexes;
 
-            /// <summary>XMZADD 20260904 初始化 SQL 逻辑窗口的起止行和合并文本。</summary>
-            public SqlBlock(int startLineIndex, int endLineIndex, string text)
+            /// <summary>XMZADD 20260914 初始化 SQL 窗口并分离安全字段文本与保留输出别名的原文。</summary>
+            public SqlBlock(int startLineIndex, int endLineIndex, string text, string aliasText)
             {
                 StartLineIndex = startLineIndex;
                 EndLineIndex = endLineIndex;
                 Text = text ?? string.Empty;
+                AliasText = aliasText ?? string.Empty;
                 lineStartCharacterIndexes = new List<int>();
                 lineStartCharacterIndexes.Add(0);
                 for (int characterIndex = 0; characterIndex < Text.Length; characterIndex++)
@@ -1396,6 +2112,7 @@ namespace SHB.EosDataDictionary.Services
             public int StartLineIndex { get; private set; }
             public int EndLineIndex { get; private set; }
             public string Text { get; private set; }
+            public string AliasText { get; private set; }
 
             /// <summary>XMZADD 20260905 将规范化 SQL 字符位置映射为原始物理源码的一基行号。</summary>
             public int GetSourceLine(int characterIndex)

@@ -641,6 +641,202 @@ namespace SHB.EosDataDictionary.Tests
             AssertBusinessIdentityDoesNotContain(evidence, "Hidden");
         }
 
+        /// <summary>XMZADD 20260914 验证 SQL 直接列的四种中文别名都能精确映射到物理字段。</summary>
+        [TestMethod]
+        public void Extract_SelectDirectChineseAliases_MapToPhysicalFields()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.Owner_Company_ID AS 货主公司ID, A.Acceptance_ID AS [验收单ID], " +
+                "A.Status AS '验收状态', A.Source_ID 来源ID FROM DA_Acceptance A\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/AcceptanceQuery.vb", "DA", lines);
+
+            AssertSqlColumnAlias(evidence, "DA_Acceptance", "Owner_Company_ID", "货主公司ID");
+            AssertSqlColumnAlias(evidence, "DA_Acceptance", "Acceptance_ID", "验收单ID");
+            AssertSqlColumnAlias(evidence, "DA_Acceptance", "Status", "验收状态");
+            AssertSqlColumnAlias(evidence, "DA_Acceptance", "Source_ID", "来源ID");
+        }
+
+        /// <summary>XMZADD 20260914 验证跨行 SQL 的唯一裸字段中文别名保留真实源码行。</summary>
+        [TestMethod]
+        public void Extract_MultilineSelectBareFieldAliases_MapToSinglePhysicalTable()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT \" & _",
+                " \"Owner_Company_ID AS 货主公司ID, \" & _",
+                " \"Acceptance_ID 验收单ID \" & _",
+                " \"FROM DA_Acceptance\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/MultilineAlias.vb", "DA", lines);
+
+            AssertEvidenceLocation(evidence, "DA_Acceptance", "Owner_Company_ID", "SqlColumnAlias", 2,
+                "Owner_Company_ID AS 货主公司ID");
+            AssertEvidenceLocation(evidence, "DA_Acceptance", "Acceptance_ID", "SqlColumnAlias", 3,
+                "Acceptance_ID 验收单ID");
+        }
+
+        /// <summary>XMZADD 20260914 验证计算、CASE、函数、聚合及多字段表达式只形成派生列审计。</summary>
+        [TestMethod]
+        public void Extract_SelectComputedAliases_DoNotNameAnyPhysicalField()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.Price * A.Quantity AS 金额, " +
+                "CASE WHEN A.Status=1 THEN 'Y' ELSE 'N' END AS 状态说明, " +
+                "COUNT(A.ID) AS 记录数, A.FirstName + A.LastName AS 姓名 FROM DA_Acceptance A\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/ComputedAliases.vb", "DA", lines);
+
+            Assert.IsNull(FindEvidence(evidence, "DA_Acceptance", "Price", "SqlColumnAlias"));
+            Assert.IsNull(FindEvidence(evidence, "DA_Acceptance", "Quantity", "SqlColumnAlias"));
+            Assert.IsNull(FindEvidence(evidence, "DA_Acceptance", "Status", "SqlColumnAlias"));
+            Assert.IsNull(FindEvidence(evidence, "DA_Acceptance", "ID", "SqlColumnAlias"));
+            Assert.IsNull(FindEvidence(evidence, "DA_Acceptance", "FirstName", "SqlColumnAlias"));
+            Assert.IsNull(FindEvidence(evidence, "DA_Acceptance", "LastName", "SqlColumnAlias"));
+            Assert.AreEqual(4, CountRule(evidence, "SqlDerivedColumnAlias"));
+        }
+
+        /// <summary>XMZADD 20260914 验证单引号输出别名可提取且 SQL 常量中的伪别名不会泄漏。</summary>
+        [TestMethod]
+        public void Extract_SelectSingleQuotedAlias_DoesNotLeakSqlConstants()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.Owner_ID AS '货主ID', " +
+                "'A.Owner_Company_ID AS 伪标题' AS RemarkCaption FROM DA_Acceptance A " +
+                "WHERE A.Remark='A.Owner_Company_ID AS 假标题'\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/QuotedAlias.vb", "DA", lines);
+
+            AssertSqlColumnAlias(evidence, "DA_Acceptance", "Owner_ID", "货主ID");
+            Assert.IsNull(FindEvidence(evidence, "DA_Acceptance", "Owner_Company_ID", "SqlColumnAlias"));
+            Assert.IsFalse(ContainsChineseCandidate(evidence, "伪标题"));
+            Assert.IsFalse(ContainsChineseCandidate(evidence, "假标题"));
+        }
+
+        /// <summary>XMZADD 20260914 验证嵌套查询复用同一别名时分别绑定各自作用域的物理表。</summary>
+        [TestMethod]
+        public void Extract_SelectAlias_ReusedAcrossNestedScopes_DoesNotCrossBindTables()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.ID AS 外层ID FROM Alpha A " +
+                "WHERE EXISTS (SELECT A.ID AS 内层ID FROM Beta A WHERE A.ID>0)\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/Common/NestedAlias.vb", "Common", lines);
+
+            AssertSqlColumnAlias(evidence, "Alpha", "ID", "外层ID");
+            AssertSqlColumnAlias(evidence, "Beta", "ID", "内层ID");
+            Assert.IsFalse(HasSqlAliasCandidate(evidence, "Alpha", "ID", "内层ID"));
+            Assert.IsFalse(HasSqlAliasCandidate(evidence, "Beta", "ID", "外层ID"));
+        }
+
+        /// <summary>XMZADD 20260914 验证 CTE 内层物理字段别名可用且外层逻辑列不会反绑物理字段。</summary>
+        [TestMethod]
+        public void Extract_SelectAlias_CteOuterProjection_DoesNotCrossBindLogicalTable()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"WITH Recent AS (SELECT A.Owner_ID AS 货主ID FROM Alpha A) " +
+                "SELECT Recent.Owner_ID AS 展示ID FROM Recent\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/Common/CteAlias.vb", "Common", lines);
+
+            AssertSqlColumnAlias(evidence, "Alpha", "Owner_ID", "货主ID");
+            Assert.IsNull(FindEvidence(evidence, "Recent", "Owner_ID", "SqlColumnAlias"));
+            Assert.IsFalse(HasSqlAliasCandidate(evidence, "Alpha", "Owner_ID", "展示ID"));
+        }
+
+        /// <summary>XMZADD 20260914 验证方括号内的 SQL 关键字字段不会被误判为查询作用域边界。</summary>
+        [TestMethod]
+        public void Extract_SelectBracketedKeywordFields_DoNotCreateFakeScopes()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.[From] AS 来源值, A.[Order] AS 排序值 FROM Alpha A\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/Common/BracketedKeywordFields.vb", "Common", lines);
+
+            AssertSqlColumnAlias(evidence, "Alpha", "From", "来源值");
+            AssertSqlColumnAlias(evidence, "Alpha", "Order", "排序值");
+            Assert.AreEqual(0, CountRule(evidence, "SqlDerivedColumnAlias"));
+        }
+
+        /// <summary>XMZADD 20260915 验证 SQL 注释中的假来源和复用别名不会破坏真实字段归属。</summary>
+        [TestMethod]
+        public void Extract_SelectSqlCommentFakeSource_DoesNotChangePhysicalBinding()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.ID AS 编号 -- FROM Fake A\" & vbCrLf & _",
+                " \"FROM Alpha A\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/Common/SqlCommentSource.vb", "Common", lines);
+
+            AssertSqlColumnAlias(evidence, "Alpha", "ID", "编号");
+            Assert.IsFalse(HasSqlAliasCandidate(evidence, "Fake", "ID", "编号"));
+        }
+
+        /// <summary>XMZADD 20260915 验证 SQL 块注释中的伪联表不会制造字段归属冲突。</summary>
+        [TestMethod]
+        public void Extract_SelectSqlBlockCommentFakeJoin_DoesNotChangePhysicalBinding()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT A.ID AS 编号 /* JOIN Fake A ON A.ID=A.ID */ FROM Alpha A\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/Common/SqlBlockCommentSource.vb", "Common", lines);
+
+            AssertSqlColumnAlias(evidence, "Alpha", "ID", "编号");
+            Assert.IsFalse(HasSqlAliasCandidate(evidence, "Fake", "ID", "编号"));
+        }
+
+        /// <summary>XMZADD 20260914 验证列标题资源函数只采用代码中显式存在的中文后备文本。</summary>
+        [TestMethod]
+        public void Extract_CaptionResourceFallback_UsesOnlyExplicitChineseLiteral()
+        {
+            string[] lines =
+            {
+                "Dim sql = \"SELECT op_createtime, Status, DynamicCaption FROM DA_Acceptance\"",
+                "fg.Cols(\"op_createtime\").Caption = GetResourceText(\"OperationTime\", \"操作记录创建时间\")",
+                "Dim statusColumn As New DataColumn(\"Status\")",
+                "statusColumn.Caption = GetResourceText(\"Status\", \"验收状态\")",
+                "fg.Cols(\"DynamicCaption\").Caption = GetResourceText(\"DynamicCaption\", dynamicCaption)"
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "ERP/DA/LocalizedCaptions.vb", "DA", lines);
+
+            SourceEvidence operationTime = FindEvidence(
+                evidence, "DA_Acceptance", "op_createtime", "GridColumnCaption");
+            Assert.IsNotNull(operationTime);
+            Assert.AreEqual("操作记录创建时间", operationTime.ChineseNameCandidate);
+            SourceEvidence status = FindEvidence(evidence, "DA_Acceptance", "Status", "DataColumnCaption");
+            Assert.IsNotNull(status);
+            Assert.AreEqual("验收状态", status.ChineseNameCandidate);
+            Assert.IsNull(FindEvidence(evidence, "DA_Acceptance", "DynamicCaption", "GridColumnCaption"));
+        }
+
         /// <summary>XMZADD 20260905 验证字段证据准确指向包含该字段的实际物理源码行。</summary>
         private static void AssertEvidenceLocation(IList<SourceEvidence> evidence, string objectName,
             string fieldName, string ruleName, int expectedLine, string expectedOriginalText)
@@ -668,6 +864,63 @@ namespace SHB.EosDataDictionary.Tests
                 }
             }
             return null;
+        }
+
+        /// <summary>XMZADD 20260914 验证 SQL 中文别名证据携带物理定位、直接强度和展示用途。</summary>
+        private static void AssertSqlColumnAlias(IList<SourceEvidence> evidence, string objectName,
+            string fieldName, string expectedChineseName)
+        {
+            SourceEvidence item = FindEvidence(evidence, objectName, fieldName, "SqlColumnAlias");
+            Assert.IsNotNull(item);
+            Assert.AreEqual(expectedChineseName, item.ChineseNameCandidate);
+            Assert.AreEqual(SourceEvidenceStrength.DirectBusinessCode, item.Strength);
+            Assert.AreEqual(SourceUsageKind.Display, item.UsageKind);
+        }
+
+        /// <summary>XMZADD 20260914 判断指定物理字段是否存在某一 SQL 中文别名候选。</summary>
+        private static bool HasSqlAliasCandidate(IList<SourceEvidence> evidence, string objectName,
+            string fieldName, string chineseName)
+        {
+            for (int index = 0; index < evidence.Count; index++)
+            {
+                SourceEvidence item = evidence[index];
+                if (string.Equals(item.ObjectName, objectName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(item.FieldName, fieldName, StringComparison.OrdinalIgnoreCase) &&
+                    item.Evidence != null && item.Evidence.RuleName == "SqlColumnAlias" &&
+                    string.Equals(item.ChineseNameCandidate, chineseName, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>XMZADD 20260914 判断证据集合是否泄漏指定中文候选。</summary>
+        private static bool ContainsChineseCandidate(IList<SourceEvidence> evidence, string chineseName)
+        {
+            for (int index = 0; index < evidence.Count; index++)
+            {
+                if (string.Equals(evidence[index].ChineseNameCandidate, chineseName, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>XMZADD 20260914 统计指定规则的审计证据数量。</summary>
+        private static int CountRule(IList<SourceEvidence> evidence, string ruleName)
+        {
+            int count = 0;
+            for (int index = 0; index < evidence.Count; index++)
+            {
+                if (evidence[index].Evidence != null &&
+                    string.Equals(evidence[index].Evidence.RuleName, ruleName, StringComparison.Ordinal))
+                {
+                    count++;
+                }
+            }
+            return count;
         }
 
         /// <summary>XMZADD 20260904 统计同一表字段规则的证据数量以验证提取阶段去重。</summary>

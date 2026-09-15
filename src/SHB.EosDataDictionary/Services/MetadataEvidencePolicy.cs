@@ -174,11 +174,12 @@ namespace SHB.EosDataDictionary.Services
             return offset > 0;
         }
 
-        /// <summary>XMZADD 20260905 识别可单独支撑名称细化的字段关系和界面直接绑定证据。</summary>
+        /// <summary>XMZADD 20260914 识别可单独支撑名称细化的字段关系、界面标题和 SQL 直接列别名。</summary>
         private static bool IsDirectBusinessEvidence(string ruleName)
         {
             return string.Equals(ruleName, "GridColumnCaption", StringComparison.Ordinal) ||
                    string.Equals(ruleName, "DataColumnCaption", StringComparison.Ordinal) ||
+                   string.Equals(ruleName, "SqlColumnAlias", StringComparison.Ordinal) ||
                    string.Equals(ruleName, "SqlFieldRelation", StringComparison.Ordinal);
         }
 
