@@ -381,6 +381,29 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual("1", snapshot.Tables[0].Fields[0].EnumItems[0].Value);
         }
 
+        /// <summary>XMZADD 20260915 验证旧快照的只读名称证据数组可在等号名称清洗时安全扩展。</summary>
+        [TestMethod]
+        public void Enrich_ReadOnlyNameEvidence_IsCopiedBeforeNormalizationAudit()
+        {
+            SnapshotData snapshot = CreateSingleFieldSnapshot("DA_Acceptance", "Status");
+            FieldMetadata field = snapshot.Tables[0].Fields[0];
+            field.ChineseName = new MetadataValue
+            {
+                Value = "Status=验收状态",
+                Status = ConfidenceStatus.CodeEvidence,
+                Evidence = new[]
+                {
+                    new EvidenceItem { RuleName = "LegacyCodeName", RawValue = "Status=验收状态" }
+                }
+            };
+
+            MetadataEnrichmentService.Enrich(snapshot, new List<SourceEvidence>());
+
+            Assert.AreEqual("验收状态", field.ChineseName.Value);
+            Assert.AreEqual(2, field.ChineseName.Evidence.Count);
+            Assert.AreEqual("NormalizeNameCandidate", field.ChineseName.Evidence[1].RuleName);
+        }
+
         /// <summary>XMZADD 20260831 验证源码没有枚举依据时枚举属性保持为空。</summary>
         [TestMethod]
         public void Enrich_LeavesEnumEmptyWhenCodeHasNoEnum()

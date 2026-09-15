@@ -383,11 +383,20 @@ namespace SHB.EosDataDictionary.Services
                 return;
             }
             existing.Value = normalized.Value;
-            if (existing.Evidence == null)
+            var writableEvidence = new List<EvidenceItem>();
+            if (existing.Evidence != null)
             {
-                existing.Evidence = new List<EvidenceItem>();
+                for (int evidenceIndex = 0; evidenceIndex < existing.Evidence.Count; evidenceIndex++)
+                {
+                    if (existing.Evidence[evidenceIndex] != null)
+                    {
+                        writableEvidence.Add(existing.Evidence[evidenceIndex]);
+                    }
+                }
             }
-            existing.Evidence.Add(new EvidenceItem
+            // 历史快照可能把证据反序列化为固定长度数组，名称清洗前必须换成可写集合。
+            existing.Evidence = writableEvidence;
+            writableEvidence.Add(new EvidenceItem
             {
                 SourceType = existing.SourceType,
                 RuleName = "NormalizeNameCandidate",
