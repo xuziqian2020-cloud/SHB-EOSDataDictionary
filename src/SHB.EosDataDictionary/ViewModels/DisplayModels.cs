@@ -100,7 +100,7 @@ namespace SHB.EosDataDictionary.ViewModels
         public string EnumText { get { return BuildEnumText(); } }
         public string LengthText { get { return Metadata.LengthText; } }
         public string RequiredText { get { return Metadata.IsRequired ? "是" : "否"; } }
-        public string KeyText { get { return Metadata.IsPrimaryKey ? "主键" : (Metadata.IsForeignKey ? "外键" : (IsInferredForeignKey() ? "推测外键" : "—")); } }
+        public string KeyText { get { return GetKeyText(); } }
         public string RelationText { get { return Metadata.RelationSummary == null ? "暂无关联说明" : Metadata.RelationSummary.Value; } }
         public string StatusText { get { return TableDisplayModel.GetStatusText(Metadata.ChineseName == null ? ConfidenceStatus.PendingConfirmation : Metadata.ChineseName.Status); } }
         public Brush StatusBrush { get { return TableDisplayModel.GetStatusBrush(Metadata.ChineseName == null ? ConfidenceStatus.PendingConfirmation : Metadata.ChineseName.Status); } }
@@ -130,6 +130,17 @@ namespace SHB.EosDataDictionary.ViewModels
         {
             return Metadata.RelationSummary != null && Metadata.RelationSummary.Status == ConfidenceStatus.Guessed &&
                    (Metadata.RelationSummary.Value ?? string.Empty).StartsWith("推测关联：", System.StringComparison.Ordinal);
+        }
+
+        /// <summary>XMZADD 20260916 区分真实外键、命名推测和单一代码 JOIN 参考关系，避免新人误把参考当成约束。</summary>
+        private string GetKeyText()
+        {
+            if (Metadata.IsPrimaryKey) return "主键";
+            if (Metadata.IsForeignKey) return "外键";
+            string relation = Metadata.RelationSummary == null ? string.Empty : Metadata.RelationSummary.Value ?? string.Empty;
+            if (Metadata.RelationSummary != null && Metadata.RelationSummary.Status == ConfidenceStatus.Guessed &&
+                relation.StartsWith("参考关联：", System.StringComparison.Ordinal)) return "参考外键";
+            return IsInferredForeignKey() ? "推测外键" : "—";
         }
     }
 

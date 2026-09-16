@@ -37,8 +37,9 @@ namespace SHB.EosDataDictionary.Tests
                 Assert.AreEqual("Item", item.Relations[0].ChildTableName);
                 Assert.AreEqual("Company_ID", item.Relations[0].ChildFieldName);
                 Assert.AreEqual(ConfidenceStatus.CodeEvidence, item.Relations[0].RelationType.Status);
-                Assert.AreEqual(1, item.Relations[0].RelationType.Evidence.Count);
+                Assert.AreEqual(2, item.Relations[0].RelationType.Evidence.Count);
                 Assert.AreEqual("EntityObjectRelation", item.Relations[0].RelationType.Evidence[0].RuleName);
+                Assert.AreEqual("SqlFieldRelation", item.Relations[0].RelationType.Evidence[1].RuleName);
             }
             finally
             {
@@ -424,6 +425,22 @@ namespace SHB.EosDataDictionary.Tests
                     RelationFieldName = "Company_ID",
                     RelationTargetEntity = "t_Company",
                     Evidence = new EvidenceItem { RuleName = "EntityObjectRelation", SourcePath = "ERP/表-类定义/t_Item.vb", SourceLine = 30 }
+                },
+                new SourceEvidence
+                {
+                    ObjectName = "Item",
+                    FieldName = "Company_ID",
+                    RelationTargetObjectName = "Company",
+                    RelationTargetFieldName = "Company_ID",
+                    Origin = SourceEvidenceOrigin.BusinessCode,
+                    UsageKind = SourceUsageKind.Relation,
+                    Evidence = new EvidenceItem
+                    {
+                        RuleName = "SqlFieldRelation",
+                        SourceType = "EOS业务源码",
+                        SourcePath = "ERP/Item/ItemQuery.vb",
+                        SourceLine = 120
+                    }
                 }
             };
         }

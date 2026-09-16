@@ -4,10 +4,10 @@ using SHB.EosDataDictionary.Models;
 
 namespace SHB.EosDataDictionary.Services
 {
-    /// <summary>XMZADD 20260831 在旧 EOS 数据库缺少真实外键时按字段名和目标表主键补充明确标为推测的逻辑关系。</summary>
+    /// <summary>XMZADD 20260916 在缺少真实外键和代码关系时按完整父子端点补充明确标为推测的逻辑关系。</summary>
     public static class LogicalRelationDiscoveryService
     {
-        /// <summary>XMZADD 20260831 一次建立表名索引并发现唯一可定位的命名外键，使父子表都能查看同一关系。</summary>
+        /// <summary>XMZADD 20260916 一次建立表名索引并按完整关系键发现唯一命名外键，使父子表共享同一关系。</summary>
         public static void Discover(SnapshotData snapshot)
         {
             if (snapshot == null || snapshot.Tables == null)
@@ -48,8 +48,13 @@ namespace SHB.EosDataDictionary.Services
                         continue;
                     }
                     FieldMetadata parentField = FindPrimaryKey(parent, referenceName, primaryKeyCache);
-                    string relationKey = MakeRelationKey(child.SchemaName, child.ObjectName, childField.FieldName);
-                    if (parentField == null || existingRelations.Contains(relationKey))
+                    if (parentField == null)
+                    {
+                        continue;
+                    }
+                    string relationKey = MakeRelationKey(parent.SchemaName, parent.ObjectName, parentField.FieldName,
+                        child.SchemaName, child.ObjectName, childField.FieldName);
+                    if (existingRelations.Contains(relationKey))
                     {
                         continue;
                     }
@@ -90,6 +95,7 @@ namespace SHB.EosDataDictionary.Services
                 {
                     // 当前表已有关系必须先占用唯一键，避免其他表保存的双向副本再次加入详情。
                     targetRelationKeys.Add(MakeRelationKey(
+                        relation.ParentSchemaName, relation.ParentTableName, relation.ParentFieldName,
                         relation.ChildSchemaName, relation.ChildTableName, relation.ChildFieldName));
                 }
             }
@@ -120,6 +126,7 @@ namespace SHB.EosDataDictionary.Services
                         continue;
                     }
                     string relationKey = MakeRelationKey(
+                        relation.ParentSchemaName, relation.ParentTableName, relation.ParentFieldName,
                         relation.ChildSchemaName, relation.ChildTableName, relation.ChildFieldName);
                     existingRelations.Add(relationKey);
                     if (RelationInvolvesTable(relation, target) && targetRelationKeys.Add(relationKey) &&
@@ -163,8 +170,13 @@ namespace SHB.EosDataDictionary.Services
                         continue;
                     }
                     FieldMetadata parentField = FindPrimaryKey(parent, referenceName, primaryKeyCache);
-                    string relationKey = MakeRelationKey(child.SchemaName, child.ObjectName, childField.FieldName);
-                    if (parentField == null || existingRelations.Contains(relationKey))
+                    if (parentField == null)
+                    {
+                        continue;
+                    }
+                    string relationKey = MakeRelationKey(parent.SchemaName, parent.ObjectName, parentField.FieldName,
+                        child.SchemaName, child.ObjectName, childField.FieldName);
+                    if (existingRelations.Contains(relationKey))
                     {
                         continue;
                     }
@@ -259,6 +271,7 @@ namespace SHB.EosDataDictionary.Services
                     if (relation != null)
                     {
                         existingRelations.Add(MakeRelationKey(
+                            relation.ParentSchemaName, relation.ParentTableName, relation.ParentFieldName,
                             relation.ChildSchemaName, relation.ChildTableName, relation.ChildFieldName));
                     }
                 }
@@ -381,11 +394,13 @@ namespace SHB.EosDataDictionary.Services
             };
         }
 
-        /// <summary>XMZADD 20260831 生成子表字段关系唯一键，阻止真实和推测关系重复展示。</summary>
-        private static string MakeRelationKey(string childSchema, string childTable, string childField)
+        /// <summary>XMZADD 20260916 生成完整父子端点关系键，阻止同目标重复且保留同一子字段的真实冲突目标。</summary>
+        private static string MakeRelationKey(string parentSchema, string parentTable, string parentField,
+            string childSchema, string childTable, string childField)
         {
-            return (childSchema ?? string.Empty) + "\u001F" +
-                (childTable ?? string.Empty) + "\u001F" + (childField ?? string.Empty);
+            return string.Concat(parentSchema ?? string.Empty, "\u001F", parentTable ?? string.Empty,
+                "\u001F", parentField ?? string.Empty, "\u001F", childSchema ?? string.Empty,
+                "\u001F", childTable ?? string.Empty, "\u001F", childField ?? string.Empty);
         }
     }
 }

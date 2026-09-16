@@ -45,6 +45,50 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsTrue(relation.RelationType.Value.Contains("推测"));
         }
 
+        /// <summary>XMZADD 20260916 验证单一代码来源只形成明确标注的参考关系。</summary>
+        [TestMethod]
+        public void InferCodeRelation_SingleJoin_IsReference()
+        {
+            RelationMetadata relation = RelationInferenceService.InferCodeRelation(
+                new RelationInput
+                {
+                    ParentTableName = "T_PARENT",
+                    ParentFieldName = "ID",
+                    ChildTableName = "T_CHILD",
+                    ChildFieldName = "PARENT_ID"
+                },
+                new List<EvidenceItem> { new EvidenceItem { RuleName = "SqlFieldRelation" } },
+                false,
+                1);
+
+            Assert.AreEqual(ConfidenceStatus.Guessed, relation.RelationType.Status);
+            Assert.AreEqual("参考关联：多对一", relation.RelationType.Value);
+        }
+
+        /// <summary>XMZADD 20260916 验证实体关系与 JOIN 交叉确认后由关系推理器标记为正式代码证据。</summary>
+        [TestMethod]
+        public void InferCodeRelation_EntityAndJoinAgree_IsFormal()
+        {
+            RelationMetadata relation = RelationInferenceService.InferCodeRelation(
+                new RelationInput
+                {
+                    ParentTableName = "T_PARENT",
+                    ParentFieldName = "ID",
+                    ChildTableName = "T_CHILD",
+                    ChildFieldName = "PARENT_ID"
+                },
+                new List<EvidenceItem>
+                {
+                    new EvidenceItem { RuleName = "EntityObjectRelation" },
+                    new EvidenceItem { RuleName = "SqlFieldRelation" }
+                },
+                true,
+                1);
+
+            Assert.AreEqual(ConfidenceStatus.CodeEvidence, relation.RelationType.Status);
+            Assert.AreEqual("代码关联：多对一", relation.RelationType.Value);
+        }
+
         /// <summary>XMZADD 20260901 验证关系推理保留父子对象的模式名以形成跨 schema 稳定键。</summary>
         [TestMethod]
         public void Infer_RelationSchemaNames_ArePreserved()
@@ -120,6 +164,19 @@ namespace SHB.EosDataDictionary.Tests
             LogicalRelationDiscoveryService.Discover(snapshot);
 
             Assert.AreEqual(0, snapshot.Tables[snapshot.Tables.Count - 1].Relations.Count);
+        }
+
+        /// <summary>XMZADD 20260916 验证名称可定位但目标没有真实主键时安全跳过，不因完整关系键计算抛出异常。</summary>
+        [TestMethod]
+        public void Discover_TargetWithoutPrimaryKey_SkipsSafely()
+        {
+            SnapshotData snapshot = CreateItemImageSnapshot(false);
+            snapshot.Tables[0].Fields[0].IsPrimaryKey = false;
+
+            LogicalRelationDiscoveryService.Discover(snapshot);
+
+            Assert.AreEqual(0, snapshot.Tables[0].Relations.Count);
+            Assert.AreEqual(0, snapshot.Tables[1].Relations.Count);
         }
 
         /// <summary>XMZADD 20260831 验证旧快照反序列化出的只读关系数组会先转换为可追加集合。</summary>
