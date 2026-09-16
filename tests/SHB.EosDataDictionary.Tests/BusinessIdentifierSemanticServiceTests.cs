@@ -189,6 +189,19 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsNotNull(result.UnknownTokens);
         }
 
+        /// <summary>XMZADD 20260916 验证只有 Owner 字段词面而无表、模块或关系时只形成待补上下文的保守语义。</summary>
+        [TestMethod]
+        public void Infer_OwnerCompanyWithoutBusinessContext_RequiresMoreEvidence()
+        {
+            BusinessFieldNameResult result = new BusinessIdentifierSemanticService().Infer(
+                new BusinessFieldNameContext { FieldName = "Owner_Company_ID" });
+
+            Assert.AreEqual("所属公司ID", result.Value);
+            Assert.IsTrue(result.ConfidenceScore < 75);
+            Assert.AreEqual("OwnerContextRequired", result.RuleName);
+            StringAssert.Contains(result.Explanation, "缺少业务上下文");
+        }
+
         /// <summary>XMZADD 20260904 验证来源、目标和最后等字段修饰词在组合语义中完整保留。</summary>
         [DataTestMethod]
         [DataRow("Account_Storage_IO", "仓储与库存", "Source_Company_ID", "来源公司ID")]

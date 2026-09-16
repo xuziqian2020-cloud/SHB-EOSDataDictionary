@@ -71,6 +71,16 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual(expected, IdentifierTranslationService.TranslateTableName(source));
         }
 
+        /// <summary>XMZADD 20260916 验证 Account 在客户和用户主体上下文中表示账户，而不是仓储或财务流水账。</summary>
+        [DataTestMethod]
+        [DataRow("User_Account", "用户账户表")]
+        [DataRow("Customer_Account", "客户账户表")]
+        [DataRow("Supplier_Account", "供应商账户表")]
+        public void TranslateTableName_IdentityAccount_UsesAccountMeaning(string source, string expected)
+        {
+            Assert.AreEqual(expected, IdentifierTranslationService.TranslateTableName(source));
+        }
+
         /// <summary>XMZADD 20260831 验证常见图片字段直接显示中文且不重复附加英文字段名。</summary>
         [TestMethod]
         public void TranslateFieldName_ImageFields_ReturnDirectChineseNames()
@@ -307,6 +317,22 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("点击操作"));
             Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("MPI_WC"));
             Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("订单条目ID 属于Purchase_Order_Item"));
+        }
+
+        /// <summary>XMZADD 20260916 验证可翻译英文词根不得混入正式中文名，同时保留开发人员通用的技术缩写。</summary>
+        [TestMethod]
+        public void IsReliableChineseName_UntranslatedLatinFragments_AreRejected()
+        {
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("Owner公司ID"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("op创建时间"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("Spec规格"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("Currency币别"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("KIS编码"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("XYZ名称"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("事业部ID"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("产品BOM"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("OA付款批次"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("接口URL"));
         }
 
         /// <summary>XMZADD 20260907 验证金蝶 F 字段前缀不会成为未知缩写，也不会丢失金蝶来源语义。</summary>

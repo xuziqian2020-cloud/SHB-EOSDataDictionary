@@ -61,6 +61,22 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsNull(table.SuggestedChineseName);
         }
 
+        /// <summary>XMZADD 20260916 验证数据库来源不能绕过伪中文检查，未翻译英文残片只能进入参考层。</summary>
+        [TestMethod]
+        public void Apply_DatabasePseudoChinese_IsStoredAsSuggestion()
+        {
+            FieldMetadata field = CreateField("Owner_Company_ID");
+            MetadataValue candidate = CreateCandidate(
+                "Owner公司ID", ConfidenceStatus.DatabaseEvidence, 100,
+                "DatabaseComment", string.Empty, 0);
+
+            new BusinessNameLayerService().ApplyFieldCandidate(field, candidate);
+
+            Assert.AreEqual(string.Empty, field.ChineseName.Value);
+            Assert.AreEqual("Owner公司ID", field.SuggestedChineseName.Value);
+            Assert.AreEqual(ConfidenceStatus.DatabaseEvidence, field.SuggestedChineseName.Status);
+        }
+
         /// <summary>XMZADD 20260915 验证精确到对象的项目知识条目可成为正式中文名。</summary>
         [TestMethod]
         public void Apply_ExactKnowledge_IsPromotedToOfficial()

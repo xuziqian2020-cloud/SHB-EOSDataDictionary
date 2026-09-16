@@ -119,6 +119,108 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual("ConfirmedBusinessSemantic", snapshot.Tables[0].ChineseName.Evidence[0].RuleName);
         }
 
+        /// <summary>XMZADD 20260916 验证已确认的 Account 业务消歧高于历史数据库误注释，但仍不得覆盖人工锁定名称。</summary>
+        [TestMethod]
+        public void Enrich_ConfirmedAccountSemantics_OverridesWrongDatabaseNameButPreservesManualName()
+        {
+            var databaseNamed = new TableMetadata
+            {
+                ObjectName = "Account_Pallet_FA_Not_IO",
+                ChineseName = new MetadataValue
+                {
+                    Value = "财务非托盘出入库",
+                    Status = ConfidenceStatus.DatabaseEvidence
+                },
+                Fields = new List<FieldMetadata>()
+            };
+            var manuallyNamed = new TableMetadata
+            {
+                ObjectName = "DA_Account",
+                ChineseName = new MetadataValue
+                {
+                    Value = "人工日记账名称",
+                    Status = ConfidenceStatus.LocalOverride,
+                    IsManualOverride = true,
+                    IsLocked = true
+                },
+                Fields = new List<FieldMetadata>()
+            };
+            var snapshot = new SnapshotData
+            {
+                Tables = new List<TableMetadata> { databaseNamed, manuallyNamed }
+            };
+
+            new BusinessDictionaryV1EnrichmentService().Enrich(
+                snapshot, new List<SourceEvidence>(), null);
+
+            Assert.AreEqual("非托盘出入库流水账", databaseNamed.ChineseName.Value);
+            Assert.AreEqual(ConfidenceStatus.Confirmed, databaseNamed.ChineseName.Status);
+            Assert.AreEqual("财务非托盘出入库",
+                databaseNamed.ChineseName.OriginalAutomaticValue);
+            Assert.AreEqual("人工日记账名称", manuallyNamed.ChineseName.Value);
+        }
+
+        /// <summary>XMZADD 20260915 验证用户确认的验收单字段语义会替换历史伪中文并进入正式名称。</summary>
+        [TestMethod]
+        public void Enrich_DaAcceptanceWeakNames_AreReplacedByCompleteBusinessNames()
+        {
+            var snapshot = new SnapshotData
+            {
+                Tables = new List<TableMetadata>
+                {
+                    new TableMetadata
+                    {
+                        ObjectName = "DA_Acceptance",
+                        ChineseName = new MetadataValue
+                        {
+                            Value = "验收单",
+                            Status = ConfidenceStatus.CodeEvidence
+                        },
+                        ModuleName = new MetadataValue
+                        {
+                            Value = "财务",
+                            Status = ConfidenceStatus.CodeEvidence
+                        },
+                        Fields = new List<FieldMetadata>
+                        {
+                            new FieldMetadata
+                            {
+                                FieldName = "Owner_Company_ID",
+                                ChineseName = new MetadataValue
+                                {
+                                    Value = "Owner公司ID",
+                                    Status = ConfidenceStatus.CodeEvidence
+                                }
+                            },
+                            new FieldMetadata
+                            {
+                                FieldName = "op_createtime",
+                                ChineseName = new MetadataValue
+                                {
+                                    Value = "op创建时间",
+                                    Status = ConfidenceStatus.CodeEvidence
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            new BusinessDictionaryV1EnrichmentService().Enrich(
+                snapshot, new List<SourceEvidence>(), null);
+
+            Assert.AreEqual("货主公司ID", snapshot.Tables[0].Fields[0].ChineseName.Value);
+            Assert.AreEqual("操作记录创建时间", snapshot.Tables[0].Fields[1].ChineseName.Value);
+            Assert.AreEqual(ConfidenceStatus.Confirmed,
+                snapshot.Tables[0].Fields[0].ChineseName.Status);
+            Assert.AreEqual("ConfirmedBusinessSemantic",
+                snapshot.Tables[0].Fields[0].ChineseName.Evidence[0].RuleName);
+            Assert.AreEqual("Owner公司ID",
+                snapshot.Tables[0].Fields[0].ChineseName.OriginalAutomaticValue);
+            Assert.AreEqual("op创建时间",
+                snapshot.Tables[0].Fields[1].SuggestedChineseName.Value);
+        }
+
         /// <summary>XMZADD 20260903 验证离线富化批次会把唯一命名外键写入快照，而不只在界面查看时临时生成。</summary>
         [TestMethod]
         public void Enrich_NameOnlyForeignKey_PublishesAuditableLogicalRelation()

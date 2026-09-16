@@ -453,7 +453,7 @@ namespace SHB.EosDataDictionary.Tests
                 TableMetadata acceptance = FindTable(output, "DA_Acceptance");
                 FieldMetadata ownerCompany = FindField(acceptance, "Owner_Company_ID");
                 Assert.AreEqual("货主公司ID", ownerCompany.ChineseName.Value);
-                Assert.AreEqual(ConfidenceStatus.CodeEvidence, ownerCompany.ChineseName.Status);
+                Assert.AreEqual(ConfidenceStatus.Confirmed, ownerCompany.ChineseName.Status);
                 Assert.IsTrue(ownerCompany.ChineseName.ConfidenceScore >= 90);
                 Assert.AreEqual("公司ID", ownerCompany.ChineseName.OriginalAutomaticValue);
                 Assert.IsTrue(CountValidEvidenceLocations(ownerCompany.ChineseName) >= 2);
@@ -463,8 +463,8 @@ namespace SHB.EosDataDictionary.Tests
                 Assert.IsTrue(operationCreateTime.ChineseName.ConfidenceScore >= 85,
                     "op_createtime 端到端置信度实际为：" +
                     operationCreateTime.ChineseName.ConfidenceScore.ToString());
-                Assert.IsTrue(operationCreateTime.ChineseName.Status == ConfidenceStatus.CodeEvidence ||
-                              operationCreateTime.ChineseName.Status == ConfidenceStatus.KnowledgeBaseEvidence);
+                Assert.AreEqual(ConfidenceStatus.Confirmed,
+                    operationCreateTime.ChineseName.Status);
 
                 string changeAuditPath = Path.Combine(reportRoot, "中文名称变更审计.csv");
                 string actualReviewPath = Path.Combine(reportRoot, "实际使用字段待复核.csv");

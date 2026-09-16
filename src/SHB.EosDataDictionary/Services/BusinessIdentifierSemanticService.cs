@@ -93,6 +93,12 @@ namespace SHB.EosDataDictionary.Services
                         null);
                 }
 
+                if (!HasOwnerBusinessContext(context))
+                {
+                    return CreateResult("所属公司ID", 65, "OwnerContextRequired",
+                        "仅有 Owner Company 字段词面，缺少业务上下文和关联证据，暂按所属公司提供参考译名。", null);
+                }
+
                 // 缺少货权业务证据时采用保守所属语义，避免系统权限等对象被误标为货主。
                 return CreateResult("所属公司ID", hasCompanyRelation ? 84 : 78, "OwnerBelongingContext",
                     "非货权业务上下文中的 Owner Company 按所属公司解释。", null);
@@ -184,6 +190,17 @@ namespace SHB.EosDataDictionary.Services
             return ContainsSystemPermissionSignal(context.TableName) ||
                    ContainsSystemPermissionSignal(context.TableChineseName) ||
                    ContainsSystemPermissionSignal(context.ModuleName);
+        }
+
+        /// <summary>XMZADD 20260916 判断 Owner 多义字段是否拥有表、模块、关联或业务候选上下文。</summary>
+        private static bool HasOwnerBusinessContext(BusinessFieldNameContext context)
+        {
+            return !string.IsNullOrWhiteSpace(context.TableName) ||
+                   !string.IsNullOrWhiteSpace(context.TableChineseName) ||
+                   !string.IsNullOrWhiteSpace(context.ModuleName) ||
+                   !string.IsNullOrWhiteSpace(context.RelatedTableName) ||
+                   !string.IsNullOrWhiteSpace(context.RelatedFieldName) ||
+                   !string.IsNullOrWhiteSpace(context.BusinessIdentifierCandidate);
         }
 
         /// <summary>XMZADD 20260904 判断单项业务描述是否包含系统或权限配置线索。</summary>

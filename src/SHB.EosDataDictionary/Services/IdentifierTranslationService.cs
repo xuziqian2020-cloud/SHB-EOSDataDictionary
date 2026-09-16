@@ -13,8 +13,14 @@ namespace SHB.EosDataDictionary.Services
         private static readonly Dictionary<string, string> ExactFieldTranslations = CreateExactFieldTranslations();
         private static readonly Dictionary<string, string> TokenTranslations = CreateTokenTranslations();
         private static readonly Regex IdentifierTokenRegex = new Regex(@"[A-Z]+(?=[A-Z][a-z]|\d|$)|[A-Z]?[a-z]+|\d+|[\u4e00-\u9fff]+", RegexOptions.Compiled);
+        private static readonly Regex LatinFragmentRegex = new Regex("[A-Za-z]+", RegexOptions.Compiled);
         private static readonly Regex UnreliablePunctuationRegex = new Regex(@"[,，;；=()（）{}\[\]<>_]", RegexOptions.Compiled);
         private static readonly Regex ProceduralPhraseRegex = new Regex("表示|用于|如果|当.+时|进行|代码|方法|函数|返回|点击|必须|开始时|总数|绑定到|引用方|属于", RegexOptions.Compiled);
+        private static readonly HashSet<string> ReliableLatinAbbreviations = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "ID", "GUID", "UID", "BOM", "OA", "AI", "EOS", "ERP", "API", "SQL", "URL", "IP",
+            "HTTP", "HTTPS", "XML", "JSON", "PDF", "CAD", "SAP", "MES", "WMS", "TMS"
+        };
 
         /// <summary>XMZADD 20260901 将任意 EOS 标识符逐词翻译，并保留无法解释的缩写供后续知识库或 AI 推理。</summary>
         public IdentifierTranslationResult Translate(string identifier)
@@ -145,7 +151,7 @@ namespace SHB.EosDataDictionary.Services
                    value.IndexOf("缓存", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        /// <summary>XMZADD 20260831 判断中文注释是否像名称而不是过程说明，避免无关代码注释污染数据字典。</summary>
+        /// <summary>XMZADD 20260916 判断候选是否为完整中文业务名称，拒绝流程说明及未翻译英文残片。</summary>
         public static bool IsReliableChineseName(string candidate)
         {
             string value = (candidate ?? string.Empty).Trim();
@@ -161,9 +167,28 @@ namespace SHB.EosDataDictionary.Services
             {
                 return false;
             }
+            if (ContainsUntranslatedLatinFragment(value))
+            {
+                return false;
+            }
             // “操作人、操作日期、操作记录创建时间”是 EOS 合法业务字段名，不能因包含“操作”被当成流程说明。
             return !string.Equals(value, "操作", StringComparison.Ordinal) &&
                    !ProceduralPhraseRegex.IsMatch(value);
+        }
+
+        /// <summary>XMZADD 20260916 识别中文名中仍未翻译的英文词根，仅放行跨系统开发约定中的稳定技术缩写。</summary>
+        private static bool ContainsUntranslatedLatinFragment(string value)
+        {
+            MatchCollection matches = LatinFragmentRegex.Matches(value ?? string.Empty);
+            for (int index = 0; index < matches.Count; index++)
+            {
+                string fragment = matches[index].Value;
+                if (!ReliableLatinAbbreviations.Contains(fragment))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>XMZADD 20260831 修复旧快照中的弱推测名称和占位枚举，使升级后无需重新读取数据库即可看到新规则结果。</summary>
@@ -184,8 +209,12 @@ namespace SHB.EosDataDictionary.Services
 
                 if (ShouldRepairName(table.ChineseName))
                 {
+                    MetadataValue previousName = table.ChineseName;
+                    table.SuggestedChineseName = PreserveWeakNameAsReference(
+                        previousName, table.SuggestedChineseName, table.AlternativeChineseNames);
                     string tableName = TranslateTableName(table.ObjectName);
-                    table.ChineseName = CreateTranslatedValue(tableName, IsTableNameFullyTranslated(table.ObjectName));
+                    table.ChineseName = CreateTranslatedValue(
+                        tableName, IsTableNameFullyTranslated(table.ObjectName), previousName);
                 }
                 if (ShouldRepairModule(table.ModuleName))
                 {
@@ -209,7 +238,11 @@ namespace SHB.EosDataDictionary.Services
                     }
                     if (ShouldRepairName(field.ChineseName))
                     {
-                        field.ChineseName = CreateTranslatedValue(TranslateFieldName(field.FieldName), IsFieldNameFullyTranslated(field.FieldName));
+                        MetadataValue previousName = field.ChineseName;
+                        field.SuggestedChineseName = PreserveWeakNameAsReference(
+                            previousName, field.SuggestedChineseName, field.AlternativeChineseNames);
+                        field.ChineseName = CreateTranslatedValue(
+                            TranslateFieldName(field.FieldName), IsFieldNameFullyTranslated(field.FieldName), previousName);
                     }
                     if (IsPlaceholder(field.EnumName))
                     {
@@ -454,6 +487,12 @@ namespace SHB.EosDataDictionary.Services
         /// <summary>XMZADD 20260904 根据相邻业务对象区分多义词，并翻译稳定 EOS 词根。</summary>
         private static string TranslateKnownToken(IList<string> tokens, int index, string token)
         {
+            if (string.Equals(token, "ACCOUNT", StringComparison.OrdinalIgnoreCase) &&
+                HasIdentityAccountContext(tokens))
+            {
+                // 用户、客户和供应商主体后的 Account 表示登录或往来账户，不能套用仓储流水账语义。
+                return "账户";
+            }
             if (string.Equals(token, "BY", StringComparison.OrdinalIgnoreCase))
             {
                 if (index + 1 < tokens.Count && string.Equals(tokens[index + 1], "WHO", StringComparison.OrdinalIgnoreCase))
@@ -493,6 +532,26 @@ namespace SHB.EosDataDictionary.Services
 
             string translated;
             return TokenTranslations.TryGetValue(token, out translated) ? translated : null;
+        }
+
+        /// <summary>XMZADD 20260916 识别 Account 与用户或往来主体组合形成的账户对象。</summary>
+        private static bool HasIdentityAccountContext(IList<string> tokens)
+        {
+            if (tokens == null)
+            {
+                return false;
+            }
+            for (int index = 0; index < tokens.Count; index++)
+            {
+                string token = tokens[index];
+                if (string.Equals(token, "USER", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(token, "CUSTOMER", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(token, "SUPPLIER", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>XMZADD 20260901 判断字段前缀后的分词是否有明确词义，防止误删真实业务缩写中的 F。</summary>
@@ -548,6 +607,38 @@ namespace SHB.EosDataDictionary.Services
             return value.Status == ConfidenceStatus.CodeEvidence && !IsReliableChineseName(value.Value);
         }
 
+        /// <summary>XMZADD 20260916 将被修复的弱名称保留在参考层，避免名称改善后丢失历史结果和审计线索。</summary>
+        private static MetadataValue PreserveWeakNameAsReference(MetadataValue weakName,
+            MetadataValue suggestedName, IList<MetadataValue> alternativeNames)
+        {
+            if (weakName == null || string.IsNullOrWhiteSpace(weakName.Value))
+            {
+                return suggestedName;
+            }
+            if (suggestedName == null || string.IsNullOrWhiteSpace(suggestedName.Value))
+            {
+                return weakName;
+            }
+            if (string.Equals(suggestedName.Value, weakName.Value, StringComparison.OrdinalIgnoreCase))
+            {
+                return suggestedName;
+            }
+            if (alternativeNames != null)
+            {
+                for (int index = 0; index < alternativeNames.Count; index++)
+                {
+                    MetadataValue alternative = alternativeNames[index];
+                    if (alternative != null && string.Equals(alternative.Value, weakName.Value,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return suggestedName;
+                    }
+                }
+                alternativeNames.Add(weakName);
+            }
+            return suggestedName;
+        }
+
         /// <summary>XMZADD 20260831 判断旧模块是否为文件名或未分类占位内容。</summary>
         private static bool ShouldRepairModule(MetadataValue value)
         {
@@ -579,18 +670,28 @@ namespace SHB.EosDataDictionary.Services
             return value.Status == ConfidenceStatus.PendingConfirmation || text.StartsWith("推测：待确认", StringComparison.Ordinal) || text.StartsWith("推测：未", StringComparison.Ordinal) || text == "未发现明确枚举";
         }
 
-        /// <summary>XMZADD 20260831 创建名称翻译或规则推测值，确保旧快照不再展示待确认占位符。</summary>
-        private static MetadataValue CreateTranslatedValue(string translated, bool isFullyTranslated)
+        /// <summary>XMZADD 20260916 创建名称翻译值并保留最初自动名称，确保纠错全过程可以回溯。</summary>
+        private static MetadataValue CreateTranslatedValue(string translated, bool isFullyTranslated, MetadataValue existing)
         {
             bool isMissing = string.Equals(translated, MissingChineseName, StringComparison.Ordinal);
+            string originalAutomaticValue = string.Empty;
+            if (existing != null)
+            {
+                // 多轮自动修复仍需指向最早的自动结果，便于维护人员判断新规则是否真的改善名称。
+                originalAutomaticValue = string.IsNullOrWhiteSpace(existing.OriginalAutomaticValue)
+                    ? existing.Value
+                    : existing.OriginalAutomaticValue;
+            }
             return new MetadataValue
             {
                 Value = translated,
                 Status = isMissing ? ConfidenceStatus.PendingConfirmation : ConfidenceStatus.Guessed,
+                ConfidenceScore = isMissing ? 0 : isFullyTranslated ? 72 : 65,
                 SourceType = isFullyTranslated && !isMissing ? "名称翻译" : "规则推测",
                 SourceSummary = isMissing
                     ? "未形成可靠中文名称"
                     : isFullyTranslated ? "英文标识符拆分翻译" : "英文标识符保守推测",
+                OriginalAutomaticValue = originalAutomaticValue,
                 Evidence = new List<EvidenceItem>()
             };
         }
