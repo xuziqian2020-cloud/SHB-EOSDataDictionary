@@ -243,6 +243,45 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual(2, restoredField.RejectedSuggestionFingerprints.Count);
         }
 
+        /// <summary>XMZADD 20260916 验证弱名称分层不会为每个字段持久化空正式名和元数据默认值，避免全量快照越过安全读取边界。</summary>
+        [TestMethod]
+        public void Encode_WeakNameLayer_OmitsEmptyOfficialMetadataAndKeepsSuggestion()
+        {
+            var codec = new SnapshotCodec();
+            SnapshotData source = CreateSnapshot(false);
+            FieldMetadata field = source.Tables[0].Fields[0];
+            field.ChineseName = new MetadataValue
+            {
+                Value = string.Empty,
+                Status = ConfidenceStatus.PendingConfirmation,
+                SourceSummary = "未达到正式名称证据门槛",
+                Evidence = new List<EvidenceItem>()
+            };
+            field.SuggestedChineseName = new MetadataValue
+            {
+                Value = "客户标识参考名",
+                Status = ConfidenceStatus.Guessed,
+                Evidence = new List<EvidenceItem>()
+            };
+
+            byte[] content = codec.Encode(source);
+            string json;
+            using (var input = new MemoryStream(content, false))
+            using (var gzip = new GZipStream(input, CompressionMode.Decompress))
+            using (var reader = new StreamReader(gzip, Encoding.UTF8))
+            {
+                json = reader.ReadToEnd();
+            }
+            SnapshotData restored = codec.DecodeAndValidate(content, codec.ComputeSha256(content));
+
+            Assert.IsFalse(json.Contains("未达到正式名称证据门槛"));
+            Assert.IsFalse(json.Contains("\"Description\":null"));
+            Assert.IsNull(restored.Tables[0].Fields[0].ChineseName);
+            Assert.AreEqual("客户标识参考名", restored.Tables[0].Fields[0].SuggestedChineseName.Value);
+            Assert.AreEqual(ConfidenceStatus.Guessed,
+                restored.Tables[0].Fields[0].SuggestedChineseName.Status);
+        }
+
         /// <summary>XMZADD 20260910 验证参考名称、使用模块和拒绝指纹的插入顺序不影响格式一快照。</summary>
         [TestMethod]
         public void Encode_NewNameLayerCollectionsInDifferentOrder_ProducesSameSha256()

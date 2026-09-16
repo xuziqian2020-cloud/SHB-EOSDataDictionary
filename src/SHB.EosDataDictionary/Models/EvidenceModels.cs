@@ -45,17 +45,28 @@ namespace SHB.EosDataDictionary.Models
     }
 
     /// <summary>XMZADD 20260828 统一保存展示值、可信度和自动结果。</summary>
+    [DataContract]
     public sealed class MetadataValue
     {
+        [DataMember(EmitDefaultValue = false, Order = 1)]
         public string Value { get; set; }
+        [DataMember(EmitDefaultValue = false, Order = 2)]
         public string Description { get; set; }
+        [DataMember(EmitDefaultValue = false, Order = 3)]
         public ConfidenceStatus Status { get; set; }
+        [DataMember(EmitDefaultValue = false, Order = 4)]
         public int ConfidenceScore { get; set; }
+        [DataMember(EmitDefaultValue = false, Order = 5)]
         public string SourceType { get; set; }
+        [DataMember(EmitDefaultValue = false, Order = 6)]
         public string SourceSummary { get; set; }
+        [DataMember(EmitDefaultValue = false, Order = 7)]
         public string OriginalAutomaticValue { get; set; }
+        [DataMember(EmitDefaultValue = false, Order = 8)]
         public bool IsManualOverride { get; set; }
+        [DataMember(EmitDefaultValue = false, Order = 9)]
         public bool IsLocked { get; set; }
+        [DataMember(EmitDefaultValue = false, Order = 10)]
         public IList<EvidenceItem> Evidence { get; set; }
     }
 

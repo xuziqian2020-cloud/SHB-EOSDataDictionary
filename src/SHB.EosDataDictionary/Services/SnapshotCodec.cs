@@ -211,7 +211,7 @@ namespace SHB.EosDataDictionary.Services
                 SchemaName = table.SchemaName,
                 ObjectName = table.ObjectName,
                 ObjectType = table.ObjectType,
-                ChineseName = table.ChineseName,
+                ChineseName = CompactOfficialName(table.ChineseName),
                 SuggestedChineseName = table.SuggestedChineseName,
                 AlternativeChineseNames = CopyMetadataValues(table.AlternativeChineseNames),
                 RejectedSuggestionFingerprints = CopyStrings(table.RejectedSuggestionFingerprints),
@@ -256,7 +256,7 @@ namespace SHB.EosDataDictionary.Services
             var orderedField = new FieldMetadata
             {
                 FieldName = field.FieldName,
-                ChineseName = field.ChineseName,
+                ChineseName = CompactOfficialName(field.ChineseName),
                 SuggestedChineseName = field.SuggestedChineseName,
                 AlternativeChineseNames = CopyMetadataValues(field.AlternativeChineseNames),
                 RejectedSuggestionFingerprints = CopyStrings(field.RejectedSuggestionFingerprints),
@@ -328,6 +328,23 @@ namespace SHB.EosDataDictionary.Services
             }
             result.Sort(StringComparer.Ordinal);
             return result;
+        }
+
+        /// <summary>XMZADD 20260916 序列化时省略未达到准入门槛的空正式名，避免海量字段重复保存同一占位说明。</summary>
+        private static MetadataValue CompactOfficialName(MetadataValue value)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+            if (string.IsNullOrWhiteSpace(value.Value) &&
+                value.Status == ConfidenceStatus.PendingConfirmation &&
+                !value.IsManualOverride && !value.IsLocked &&
+                (value.Evidence == null || value.Evidence.Count == 0))
+            {
+                return null;
+            }
+            return value;
         }
 
         /// <summary>XMZADD 20260910 将旧快照缺失或显式为空的参考名称集合恢复为可直接维护的空列表。</summary>
