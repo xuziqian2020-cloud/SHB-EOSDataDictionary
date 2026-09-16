@@ -23,11 +23,11 @@ namespace SHB.EosDataDictionary.Services
                 }
                 if (string.Equals(table.ObjectName, "Account_Pallet_FA_Not_IO", StringComparison.OrdinalIgnoreCase))
                 {
-                    ApplyRule(table, "非托盘出入库流水账", "仓储", "ACCOUNT 在托盘出入库上下文中表示库存流水账，不表示财务");
+                    ApplyRule(table, "非托盘出入库流水账", "仓储与库存", "ACCOUNT 在托盘出入库上下文中表示库存流水账，不表示财务");
                 }
                 else if (string.Equals(table.ObjectName, "DA_Account", StringComparison.OrdinalIgnoreCase))
                 {
-                    ApplyRule(table, "财务流水账", "财务", "DA_Account 经业务确认表示财务流水账");
+                    ApplyRule(table, "财务流水账", "财务管理", "DA_Account 经业务确认表示财务流水账");
                 }
                 ApplyConfirmedFieldRules(table);
             }

@@ -111,9 +111,9 @@ namespace SHB.EosDataDictionary.Tests
                 snapshot, new List<SourceEvidence>(), null);
 
             Assert.AreEqual("非托盘出入库流水账", snapshot.Tables[0].ChineseName.Value);
-            Assert.AreEqual("仓储", snapshot.Tables[0].ModuleName.Value);
+            Assert.AreEqual("仓储与库存", snapshot.Tables[0].ModuleName.Value);
             Assert.AreEqual("财务流水账", snapshot.Tables[1].ChineseName.Value);
-            Assert.AreEqual("财务", snapshot.Tables[1].ModuleName.Value);
+            Assert.AreEqual("财务管理", snapshot.Tables[1].ModuleName.Value);
             Assert.AreEqual(ConfidenceStatus.Confirmed, snapshot.Tables[0].ChineseName.Status);
             Assert.AreEqual(100, snapshot.Tables[0].ChineseName.ConfidenceScore);
             Assert.AreEqual("ConfirmedBusinessSemantic", snapshot.Tables[0].ChineseName.Evidence[0].RuleName);

@@ -100,9 +100,9 @@ namespace SHB.EosDataDictionary.Tests
                 Assert.AreEqual("金蝶编码",
                     FindField(item, "KisNumber").SuggestedChineseName.Value);
                 Assert.AreEqual("非托盘出入库流水账", FindTable(output, "Account_Pallet_FA_Not_IO").ChineseName.Value);
-                Assert.AreEqual("仓储", FindTable(output, "Account_Pallet_FA_Not_IO").ModuleName.Value);
+                Assert.AreEqual("仓储与库存", FindTable(output, "Account_Pallet_FA_Not_IO").ModuleName.Value);
                 Assert.AreEqual("财务流水账", FindTable(output, "DA_Account").ChineseName.Value);
-                Assert.AreEqual("财务", FindTable(output, "DA_Account").ModuleName.Value);
+                Assert.AreEqual("财务管理", FindTable(output, "DA_Account").ModuleName.Value);
                 Assert.AreEqual(1, result.Report.EntityTableCount);
                 Assert.IsTrue(File.Exists(Path.Combine(reportRoot, "推断运行报告.md")));
             }

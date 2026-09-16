@@ -279,11 +279,11 @@ namespace SHB.EosDataDictionary.Services
             return content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
         }
 
-        /// <summary>XMZADD 20260903 将知识库章节名称归并为数据字典受控业务模块。</summary>
+        /// <summary>XMZADD 20260916 将知识库章节名称归并为数据字典统一受控业务模块。</summary>
         private static string TranslateModule(string heading)
         {
             string value = (heading ?? string.Empty).Trim();
-            if (value.IndexOf("仓库", StringComparison.Ordinal) >= 0 || value.IndexOf("库存", StringComparison.Ordinal) >= 0) return "仓库与库存";
+            if (value.IndexOf("仓库", StringComparison.Ordinal) >= 0 || value.IndexOf("库存", StringComparison.Ordinal) >= 0) return "仓储与库存";
             if (value.IndexOf("物料", StringComparison.Ordinal) >= 0 || value.IndexOf("BOM", StringComparison.OrdinalIgnoreCase) >= 0) return "物料与BOM";
             if (value.IndexOf("采购", StringComparison.Ordinal) >= 0) return "采购管理";
             if (value.IndexOf("计划", StringComparison.Ordinal) >= 0) return "计划管理";

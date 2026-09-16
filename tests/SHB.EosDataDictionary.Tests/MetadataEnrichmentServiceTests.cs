@@ -561,7 +561,7 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsNull(snapshot.Tables[0].Fields[0].SuggestedChineseName);
         }
 
-        /// <summary>XMZADD 20260831 验证技术目录归并为其他、采购等真实业务模块保留且人工维护模块不被覆盖。</summary>
+        /// <summary>XMZADD 20260916 验证技术目录归并为其他、采购归一到规范模块且人工维护模块不被覆盖。</summary>
         [TestMethod]
         public void Enrich_GroupsTechnicalModulesButPreservesBusinessAndManualModules()
         {
@@ -604,8 +604,55 @@ namespace SHB.EosDataDictionary.Tests
             MetadataEnrichmentService.Enrich(businessSnapshot, businessEvidence);
             MetadataEnrichmentService.Enrich(manualSnapshot, new List<SourceEvidence>());
 
-            Assert.AreEqual("采购", businessSnapshot.Tables[0].ModuleName.Value);
+            Assert.AreEqual("采购管理", businessSnapshot.Tables[0].ModuleName.Value);
             Assert.AreEqual("采购", manualSnapshot.Tables[0].ModuleName.Value);
+        }
+
+        /// <summary>XMZADD 20260916 验证字段级真实读写证据也参与表模块归属，并保留跨模块消费范围。</summary>
+        [TestMethod]
+        public void Enrich_FieldUsageAcrossModules_AttributesPrimaryAndConsumers()
+        {
+            SnapshotData snapshot = CreateSingleFieldSnapshot("Purchase_PayPlan", "Amount");
+            var evidence = new List<SourceEvidence>
+            {
+                new SourceEvidence
+                {
+                    ObjectName = "Purchase_PayPlan",
+                    FieldName = "Amount",
+                    ModulePath = "Purchase",
+                    UsageKind = SourceUsageKind.Write,
+                    Origin = SourceEvidenceOrigin.BusinessCode,
+                    Evidence = new EvidenceItem
+                    {
+                        SourceType = "EOS业务源码",
+                        SourcePath = "Purchase/frmPayPlanEdit.vb",
+                        SourceLine = 80,
+                        RuleName = "SqlFieldUsage"
+                    }
+                },
+                new SourceEvidence
+                {
+                    ObjectName = "Purchase_PayPlan",
+                    FieldName = "Amount",
+                    ModulePath = "Financial",
+                    UsageKind = SourceUsageKind.Read,
+                    Origin = SourceEvidenceOrigin.BusinessCode,
+                    Evidence = new EvidenceItem
+                    {
+                        SourceType = "EOS业务源码",
+                        SourcePath = "ERP/Financial/frmCashPlan.vb",
+                        SourceLine = 120,
+                        RuleName = "SqlFieldUsage"
+                    }
+                }
+            };
+
+            MetadataEnrichmentService.Enrich(snapshot, evidence);
+
+            Assert.AreEqual("采购管理", snapshot.Tables[0].ModuleName.Value);
+            Assert.AreEqual(2, snapshot.Tables[0].UsedByModules.Count);
+            Assert.AreEqual("采购管理", snapshot.Tables[0].UsedByModules[0].Value);
+            Assert.AreEqual("财务管理", snapshot.Tables[0].UsedByModules[1].Value);
         }
 
         /// <summary>XMZADD 20260831 验证显示模型在中文名称缺失时提供保守文案而不显示待确认推测。</summary>
@@ -647,7 +694,7 @@ namespace SHB.EosDataDictionary.Tests
                 snapshot.Tables[0].Fields[0].SuggestedChineseName.SourceType);
         }
 
-        /// <summary>XMZADD 20260903 验证 ACCOUNT 不再单独等同财务，并按托盘出入库或明确 FINANCE 上下文归类。</summary>
+        /// <summary>XMZADD 20260916 验证 ACCOUNT 不再单独等同财务，并按仓库或明确 FINANCE 上下文归入规范模块。</summary>
         [TestMethod]
         public void Enrich_AccountRequiresBusinessContextWhileFinanceMapsToFinance()
         {
@@ -681,8 +728,8 @@ namespace SHB.EosDataDictionary.Tests
             MetadataEnrichmentService.Enrich(financeSnapshot, evidence);
 
             Assert.AreEqual("其他", accountSnapshot.Tables[0].ModuleName.Value);
-            Assert.AreEqual("仓储", palletSnapshot.Tables[0].ModuleName.Value);
-            Assert.AreEqual("财务", financeSnapshot.Tables[0].ModuleName.Value);
+            Assert.AreEqual("仓储与库存", palletSnapshot.Tables[0].ModuleName.Value);
+            Assert.AreEqual("财务管理", financeSnapshot.Tables[0].ModuleName.Value);
         }
 
         /// <summary>XMZADD 20260831 验证批量快照包含空表、空字段集合和空字段时仍可富化其余有效字段及枚举。</summary>

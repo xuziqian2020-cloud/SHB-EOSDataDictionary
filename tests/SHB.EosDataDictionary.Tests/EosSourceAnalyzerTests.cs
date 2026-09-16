@@ -286,7 +286,7 @@ namespace SHB.EosDataDictionary.Tests
             }
         }
 
-        /// <summary>XMZADD 20260911 验证生成实体只提供权威物理映射，不把机械注释发布为业务中文名。</summary>
+        /// <summary>XMZADD 20260916 验证生成实体带明确来源角色且只提供物理映射，不发布机械中文名。</summary>
         [TestMethod]
         public void Analyze_GeneratedEntity_SeparatesPhysicalMappingFromChineseName()
         {
@@ -313,6 +313,8 @@ namespace SHB.EosDataDictionary.Tests
                 Assert.IsNull(table.ChineseNameCandidate);
                 Assert.IsNull(field.ChineseNameCandidate);
                 Assert.AreEqual("EOS生成实体", table.Evidence.SourceType);
+                Assert.AreEqual(SourceEvidenceOrigin.GeneratedEntity, table.Origin);
+                Assert.AreEqual(SourceEvidenceOrigin.GeneratedEntity, field.Origin);
                 Assert.AreEqual(SourceEvidenceStrength.Authoritative, table.Strength);
                 Assert.AreEqual(SourceUsageKind.Unknown, table.UsageKind);
             }
@@ -430,7 +432,7 @@ namespace SHB.EosDataDictionary.Tests
             }
         }
 
-        /// <summary>XMZADD 20260911 验证 Designer 标题保持参考强度，而普通业务代码标题属于直接业务证据。</summary>
+        /// <summary>XMZADD 20260916 验证 Designer 与普通业务代码具有不同来源角色、用途和证据强度。</summary>
         [TestMethod]
         public void Analyze_DesignerAndBusinessCaptions_HaveDifferentStrength()
         {
@@ -456,9 +458,11 @@ namespace SHB.EosDataDictionary.Tests
                 Assert.IsNotNull(designer);
                 Assert.IsNotNull(business);
                 Assert.AreEqual("EOS设计器", designer.Evidence.SourceType);
+                Assert.AreEqual(SourceEvidenceOrigin.Designer, designer.Origin);
                 Assert.AreEqual(SourceEvidenceStrength.Contextual, designer.Strength);
                 Assert.AreEqual(SourceUsageKind.Display, designer.UsageKind);
                 Assert.AreEqual("EOS业务源码", business.Evidence.SourceType);
+                Assert.AreEqual(SourceEvidenceOrigin.BusinessCode, business.Origin);
                 Assert.AreEqual(SourceEvidenceStrength.DirectBusinessCode, business.Strength);
                 Assert.AreEqual(SourceUsageKind.Display, business.UsageKind);
             }

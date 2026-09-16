@@ -1,18 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
-using System.Text.RegularExpressions;
 using SHB.EosDataDictionary.Models;
 
 namespace SHB.EosDataDictionary.Services
 {
-    /// <summary>XMZADD 20260828 将 EOS 源码证据合并到数据库快照并生成可见推测。</summary>
+    /// <summary>XMZADD 20260916 将 EOS 源码证据合并到快照，并分别生成名称、实体、模块及字段语义。</summary>
     public static class MetadataEnrichmentService
     {
         private static readonly List<SourceEvidence> EmptyEvidence = new List<SourceEvidence>();
 
-        /// <summary>XMZADD 20260828 按表和字段精确匹配源码证据并补齐中文候选、实体和模块。</summary>
+        /// <summary>XMZADD 20260916 按表和字段精确匹配源码证据，并独立归并名称、实体与跨模块用途。</summary>
         public static void Enrich(SnapshotData snapshot, IList<SourceEvidence> sourceEvidence)
         {
             if (snapshot == null || snapshot.Tables == null)
@@ -23,8 +21,9 @@ namespace SHB.EosDataDictionary.Services
             var objectEvidence = new Dictionary<string, List<SourceEvidence>>(StringComparer.OrdinalIgnoreCase);
             var fieldEvidence = new Dictionary<string, List<SourceEvidence>>(StringComparer.OrdinalIgnoreCase);
             var enumEvidence = new Dictionary<string, List<SourceEvidence>>(StringComparer.OrdinalIgnoreCase);
+            var moduleEvidence = new Dictionary<string, List<SourceEvidence>>(StringComparer.OrdinalIgnoreCase);
             // 先建立索引，避免真实库的每个字段都重复扫描全部源码证据。
-            BuildEvidenceIndex(sourceEvidence, objectEvidence, fieldEvidence, enumEvidence);
+            BuildEvidenceIndex(sourceEvidence, objectEvidence, fieldEvidence, enumEvidence, moduleEvidence);
 
             for (int tableIndex = 0; tableIndex < snapshot.Tables.Count; tableIndex++)
             {
@@ -34,7 +33,9 @@ namespace SHB.EosDataDictionary.Services
                     continue;
                 }
                 IList<SourceEvidence> tableEvidence = GetEvidence(objectEvidence, MakeObjectKey(table.ObjectName));
-                ApplyTableEvidence(table, tableEvidence);
+                IList<SourceEvidence> currentModuleEvidence = GetEvidence(
+                    moduleEvidence, MakeObjectKey(table.ObjectName));
+                ApplyTableEvidence(table, tableEvidence, currentModuleEvidence);
 
                 if (table.Fields == null)
                 {
@@ -55,11 +56,12 @@ namespace SHB.EosDataDictionary.Services
             }
         }
 
-        /// <summary>XMZADD 20260831 按对象和字段建立大小写不敏感的源码证据索引，降低大批量快照合并复杂度。</summary>
+        /// <summary>XMZADD 20260916 按对象、字段、枚举和模块用途建立索引，避免批量快照重复扫描全部证据。</summary>
         private static void BuildEvidenceIndex(IList<SourceEvidence> sourceEvidence,
             IDictionary<string, List<SourceEvidence>> objectEvidence,
             IDictionary<string, List<SourceEvidence>> fieldEvidence,
-            IDictionary<string, List<SourceEvidence>> enumEvidence)
+            IDictionary<string, List<SourceEvidence>> enumEvidence,
+            IDictionary<string, List<SourceEvidence>> moduleEvidence)
         {
             if (sourceEvidence == null)
             {
@@ -81,6 +83,11 @@ namespace SHB.EosDataDictionary.Services
                 else
                 {
                     AddEvidence(fieldEvidence, MakeFieldKey(item.ObjectName, item.FieldName), item);
+                }
+                if (!string.IsNullOrWhiteSpace(item.ObjectName))
+                {
+                    // 字段读写、界面展示和关系证据同样能证明整张表被哪些业务模块使用。
+                    AddEvidence(moduleEvidence, MakeObjectKey(item.ObjectName), item);
                 }
                 // 生成实体枚举可能只是代码生成器镜像，必须存在更高强度的上下文或业务证据才能发布。
                 if (!string.IsNullOrWhiteSpace(item.EnumName) &&
@@ -147,12 +154,12 @@ namespace SHB.EosDataDictionary.Services
                     entityName.StartsWith("Kis_", StringComparison.OrdinalIgnoreCase));
         }
 
-        /// <summary>XMZADD 20260831 合并表级源码证据并生成中文名称、实体和模块的可信元数据。</summary>
-        private static void ApplyTableEvidence(TableMetadata table, IList<SourceEvidence> evidence)
+        /// <summary>XMZADD 20260916 合并表级名称与实体证据，并用全部字段用途证据计算主模块和消费模块。</summary>
+        private static void ApplyTableEvidence(TableMetadata table, IList<SourceEvidence> evidence,
+            IList<SourceEvidence> moduleEvidence)
         {
             NormalizeExistingAutomaticName(table.ChineseName);
             var nameCandidates = new List<MetadataCandidate>();
-            var moduleVotes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < evidence.Count; i++)
             {
                 SourceEvidence item = evidence[i];
@@ -181,23 +188,8 @@ namespace SHB.EosDataDictionary.Services
                     };
                 }
 
-                if (!string.IsNullOrWhiteSpace(item.ModulePath))
-                {
-                    AddModuleVote(moduleVotes, TranslateModule(item.ModulePath));
-                }
             }
-
-            if (MetadataEvidencePolicy.CanReplace(table.ModuleName, ConfidenceStatus.Guessed, "SourceModuleUsage"))
-            {
-                string selectedModule = SelectModule(moduleVotes);
-                table.ModuleName = new MetadataValue
-                {
-                    Value = selectedModule,
-                    Status = ConfidenceStatus.Guessed,
-                    SourceSummary = selectedModule == "其他" ? "未找到可靠模块证据" : "EOS 源码使用位置",
-                    Evidence = new List<EvidenceItem>()
-                };
-            }
+            new BusinessModuleAttributionService().Apply(table, moduleEvidence);
 
             var layeredCandidates = CreateLayerCandidates(nameCandidates);
             if (layeredCandidates.Count == 0 &&
@@ -458,65 +450,6 @@ namespace SHB.EosDataDictionary.Services
             string text = (value ?? string.Empty).Trim();
             const int maximumLength = 240;
             return text.Length <= maximumLength ? text : text.Substring(0, maximumLength);
-        }
-
-        /// <summary>XMZADD 20260831 将源码路径归并为业务模块，并排除技术目录和文件名。</summary>
-        private static string TranslateModule(string modulePath)
-        {
-            string value = (modulePath ?? string.Empty).Trim();
-            string key = value.ToUpperInvariant();
-            string businessModule = TranslateBusinessModule(key);
-            if (!string.IsNullOrWhiteSpace(businessModule)) return businessModule;
-            if (IdentifierTranslationService.IsTechnicalModuleName(value)) return "其他";
-            MatchCollection chineseMatches = Regex.Matches(value, "[\\u4e00-\\u9fff]+");
-            if (chineseMatches.Count > 0)
-            {
-                var chinese = new StringBuilder();
-                for (int i = 0; i < chineseMatches.Count; i++) chinese.Append(chineseMatches[i].Value);
-                return chinese.ToString();
-            }
-            return "其他";
-        }
-
-        /// <summary>XMZADD 20260831 识别源码路径中的真实业务域，避免技术目录覆盖采购等业务模块。</summary>
-        private static string TranslateBusinessModule(string key)
-        {
-            if (key.IndexOf("物料", StringComparison.Ordinal) >= 0 || key.Contains("ITEM") || key.Contains("MATERIAL")) return "物料";
-            if (key.IndexOf("采购", StringComparison.Ordinal) >= 0 || key.Contains("PURCHASE")) return "采购";
-            if (key.IndexOf("生产", StringComparison.Ordinal) >= 0 || key.Contains("MANUFACTURE") || key.Contains("PRODUCTION")) return "生产制造";
-            if (key.IndexOf("质量", StringComparison.Ordinal) >= 0 || key.Contains("QUALITY")) return "质量";
-            // 财务域必须有财务、会计或凭证上下文，ACCOUNT 单词本身仅表示一类流水记录。
-            if (key.IndexOf("财务", StringComparison.Ordinal) >= 0 || key.IndexOf("会计", StringComparison.Ordinal) >= 0 ||
-                key.IndexOf("凭证", StringComparison.Ordinal) >= 0 || key.Contains("FINANCE") || key.Contains("VOUCHER")) return "财务";
-            if (key.IndexOf("仓储", StringComparison.Ordinal) >= 0 || key.Contains("WAREHOUSE") ||
-                key.Contains("STOCK") || key.Contains("INVENTORY") || key.Contains("PALLET")) return "仓储";
-            if (key.IndexOf("销售", StringComparison.Ordinal) >= 0 || key.Contains("SALES")) return "销售";
-            if (key.IndexOf("工艺", StringComparison.Ordinal) >= 0 || key.Contains("PROCESS")) return "工艺";
-            return null;
-        }
-
-        /// <summary>XMZADD 20260831 累计同一表在源码目录中的模块使用次数，避免最后一条证据覆盖主要业务模块。</summary>
-        private static void AddModuleVote(IDictionary<string, int> votes, string module)
-        {
-            int count;
-            votes.TryGetValue(module, out count);
-            votes[module] = count + 1;
-        }
-
-        /// <summary>XMZADD 20260831 优先选择使用次数最多的明确中文模块，无法确认时统一归入其他。</summary>
-        private static string SelectModule(IDictionary<string, int> votes)
-        {
-            string selected = "其他";
-            int selectedCount = 0;
-            foreach (KeyValuePair<string, int> pair in votes)
-            {
-                if (pair.Key != "其他" && pair.Value > selectedCount)
-                {
-                    selected = pair.Key;
-                    selectedCount = pair.Value;
-                }
-            }
-            return selected;
         }
 
         /// <summary>XMZADD 20260831 按实体属性声明类型匹配源码枚举成员，未匹配时保持枚举为空。</summary>
