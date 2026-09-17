@@ -39,6 +39,10 @@ namespace SHB.EosDataDictionary.ViewModels
         private bool _isPreview;
         private bool _showAllObjects;
         private bool _showEosEntityObjectsOnly;
+        private bool _showOnlyMissingOfficialNames;
+        private bool _showOnlyWithSuggestions;
+        private bool _showOnlyConflicts;
+        private bool _showOnlyActualUsedFields;
         private ConnectionProfile _currentProfile;
         private string _syncStatusText;
         private int _pendingUploadCount;
@@ -222,6 +226,57 @@ namespace SHB.EosDataDictionary.ViewModels
                     OnPropertyChanged("ShowAllObjects");
                 }
                 SearchTables(_tableSearchText);
+            }
+        }
+        /// <summary>XMZADD 20260917 仅显示尚无正式中文名的数据表，并与当前对象范围和其他筛选叠加。</summary>
+        public bool ShowOnlyMissingOfficialNames
+        {
+            get { return _showOnlyMissingOfficialNames; }
+            set
+            {
+                if (_showOnlyMissingOfficialNames == value) return;
+                _showOnlyMissingOfficialNames = value;
+                OnPropertyChanged("ShowOnlyMissingOfficialNames");
+                SearchTables(_tableSearchText);
+            }
+        }
+        /// <summary>XMZADD 20260917 仅显示具有可供人工复核参考译名的数据表。</summary>
+        public bool ShowOnlyWithSuggestions
+        {
+            get { return _showOnlyWithSuggestions; }
+            set
+            {
+                if (_showOnlyWithSuggestions == value) return;
+                _showOnlyWithSuggestions = value;
+                OnPropertyChanged("ShowOnlyWithSuggestions");
+                SearchTables(_tableSearchText);
+            }
+        }
+        /// <summary>XMZADD 20260917 仅显示存在正式名冲突或其他候选名称的数据表。</summary>
+        public bool ShowOnlyConflicts
+        {
+            get { return _showOnlyConflicts; }
+            set
+            {
+                if (_showOnlyConflicts == value) return;
+                _showOnlyConflicts = value;
+                OnPropertyChanged("ShowOnlyConflicts");
+                SearchTables(_tableSearchText);
+            }
+        }
+        /// <summary>XMZADD 20260917 仅显示能够追溯到业务代码用途的字段，并允许切回完整物理字段。</summary>
+        public bool ShowOnlyActualUsedFields
+        {
+            get { return _showOnlyActualUsedFields; }
+            set
+            {
+                if (_showOnlyActualUsedFields == value) return;
+                _showOnlyActualUsedFields = value;
+                OnPropertyChanged("ShowOnlyActualUsedFields");
+                if (_selectedTable != null)
+                {
+                    PopulateFields(_selectedTable.Metadata);
+                }
             }
         }
         public bool IsBusy
@@ -527,7 +582,9 @@ namespace SHB.EosDataDictionary.ViewModels
                 {
                     scopeCount++;
                 }
-                if (isVisibleByScope && ContainsTableText(table, _tableSearchText) && _columnFilterService.MatchesTable(row, _tableColumnFilters))
+                if (isVisibleByScope && MatchesSemanticTableFilters(row) &&
+                    ContainsTableText(table, _tableSearchText) &&
+                    _columnFilterService.MatchesTable(row, _tableColumnFilters))
                 {
                     visibleRows.Add(row);
                 }
@@ -1167,7 +1224,9 @@ namespace SHB.EosDataDictionary.ViewModels
             {
                 FieldMetadata field = table.Fields[i];
                 FieldDisplayModel row = new FieldDisplayModel(field);
-                if (ContainsFieldText(field, text) && _columnFilterService.MatchesField(row, _fieldColumnFilters))
+                if ((!ShowOnlyActualUsedFields || row.IsActualUsed) &&
+                    ContainsFieldText(field, text) &&
+                    _columnFilterService.MatchesField(row, _fieldColumnFilters))
                 {
                     FieldRows.Add(row);
                 }
@@ -1194,6 +1253,9 @@ namespace SHB.EosDataDictionary.ViewModels
         private void PopulateEvidence(TableMetadata table)
         {
             AddEvidenceRows(table.ChineseName);
+            AddEvidenceRows(table.SuggestedChineseName);
+            AddEvidenceRows(table.AlternativeChineseNames);
+            AddEvidenceRows(table.UsedByModules);
             AddEvidenceRows(table.ModuleName);
             AddEvidenceRows(table.EntityName);
             AddEvidenceRows(table.BusinessMeaning);
@@ -1211,6 +1273,8 @@ namespace SHB.EosDataDictionary.ViewModels
 
                     // 字段证据属于当前表的可核验上下文，集中展示可避免用户切换多个页面查找来源。
                     AddEvidenceRows(field.ChineseName);
+                    AddEvidenceRows(field.SuggestedChineseName);
+                    AddEvidenceRows(field.AlternativeChineseNames);
                     AddEvidenceRows(field.EntityPropertyName);
                     AddEvidenceRows(field.BusinessMeaning);
                     AddEvidenceRows(field.Usage);
@@ -1252,6 +1316,15 @@ namespace SHB.EosDataDictionary.ViewModels
                 {
                     EvidenceRows.Add(new EvidenceDisplayModel(evidence));
                 }
+            }
+        }
+
+        /// <summary>XMZADD 20260917 追加名称候选或消费模块集合中的来源证据。</summary>
+        private void AddEvidenceRows(IList<MetadataValue> metadataValues)
+        {
+            for (int index = 0; metadataValues != null && index < metadataValues.Count; index++)
+            {
+                AddEvidenceRows(metadataValues[index]);
             }
         }
 
@@ -1527,9 +1600,14 @@ namespace SHB.EosDataDictionary.ViewModels
             if (string.IsNullOrWhiteSpace(text)) return true;
             string query = text.Trim();
             return Contains(table.ObjectName, query) || Contains(table.SchemaName, query) ||
-                   Contains(table.ChineseName == null ? string.Empty : table.ChineseName.Value, query) ||
-                   Contains(table.ModuleName == null ? string.Empty : table.ModuleName.Value, query) ||
-                   Contains(table.EntityName == null ? string.Empty : table.EntityName.Value, query);
+                   ContainsMetadata(table.ChineseName, query) ||
+                   ContainsMetadata(table.SuggestedChineseName, query) ||
+                   ContainsMetadataValues(table.AlternativeChineseNames, query) ||
+                   ContainsMetadataValues(table.UsedByModules, query) ||
+                   ContainsMetadata(table.ModuleName, query) ||
+                   ContainsMetadata(table.EntityName, query) ||
+                   ContainsMetadata(table.BusinessMeaning, query) ||
+                   ContainsMetadata(table.Remark, query);
         }
 
         private static bool ContainsFieldText(FieldMetadata field, string text)
@@ -1537,9 +1615,78 @@ namespace SHB.EosDataDictionary.ViewModels
             if (string.IsNullOrWhiteSpace(text)) return true;
             string query = text.Trim();
             return Contains(field.FieldName, query) || Contains(field.OwnerTableName, query) ||
-                   Contains(field.DataType, query) || Contains(field.ChineseName == null ? string.Empty : field.ChineseName.Value, query) ||
-                   Contains(field.EntityPropertyName == null ? string.Empty : field.EntityPropertyName.Value, query) ||
-                   Contains(field.EnumName == null ? string.Empty : field.EnumName.Value, query);
+                   Contains(field.DataType, query) || Contains(field.LengthText, query) ||
+                   ContainsMetadata(field.ChineseName, query) ||
+                   ContainsMetadata(field.SuggestedChineseName, query) ||
+                   ContainsMetadataValues(field.AlternativeChineseNames, query) ||
+                   ContainsMetadata(field.EntityPropertyName, query) ||
+                   ContainsMetadata(field.BusinessMeaning, query) ||
+                   ContainsMetadata(field.Usage, query) ||
+                   ContainsMetadata(field.EnumName, query) ||
+                   ContainsEnumItems(field.EnumItems, query) ||
+                   ContainsMetadata(field.RelationSummary, query) ||
+                   ContainsMetadata(field.Remark, query);
+        }
+
+        /// <summary>XMZADD 20260917 按缺正式名、参考译名和冲突三个可组合条件过滤表行。</summary>
+        private bool MatchesSemanticTableFilters(TableDisplayModel row)
+        {
+            return row != null &&
+                   (!ShowOnlyMissingOfficialNames || !row.HasOfficialName) &&
+                   (!ShowOnlyWithSuggestions || row.HasSuggestion) &&
+                   (!ShowOnlyConflicts || row.IsConflict);
+        }
+
+        /// <summary>XMZADD 20260917 在元数据值、来源摘要和可公开证据摘要中执行统一搜索。</summary>
+        private static bool ContainsMetadata(MetadataValue value, string query)
+        {
+            if (value == null)
+            {
+                return false;
+            }
+            if (Contains(value.Value, query) || Contains(value.SourceType, query) ||
+                Contains(value.SourceSummary, query) || Contains(value.Description, query))
+            {
+                return true;
+            }
+            for (int index = 0; value.Evidence != null && index < value.Evidence.Count; index++)
+            {
+                EvidenceItem evidence = value.Evidence[index];
+                if (evidence != null && (Contains(evidence.SourceType, query) ||
+                    Contains(evidence.SourcePath, query) || Contains(evidence.RuleName, query) ||
+                    Contains(evidence.Explanation, query)))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>XMZADD 20260917 在名称候选或消费模块集合中执行统一搜索。</summary>
+        private static bool ContainsMetadataValues(IList<MetadataValue> values, string query)
+        {
+            for (int index = 0; values != null && index < values.Count; index++)
+            {
+                if (ContainsMetadata(values[index], query))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>XMZADD 20260917 让枚举原值和中文含义共同参与字段搜索。</summary>
+        private static bool ContainsEnumItems(IList<EnumItemMetadata> items, string query)
+        {
+            for (int index = 0; items != null && index < items.Count; index++)
+            {
+                EnumItemMetadata item = items[index];
+                if (item != null && (Contains(item.Value, query) || ContainsMetadata(item.ChineseName, query)))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static bool Contains(string source, string text)

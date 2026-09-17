@@ -27,6 +27,7 @@
     <SolidColorBrush x:Key="App.StatusConfirmedBrush" Color="#37D49A" />
     <SolidColorBrush x:Key="App.StatusCodeBrush" Color="#28D2C1" />
     <SolidColorBrush x:Key="App.StatusGuessBrush" Color="#F9BE42" />
+    <SolidColorBrush x:Key="App.StatusConflictBrush" Color="#FB7185" />
     <SolidColorBrush x:Key="App.LogoBackgroundBrush" Color="#092D4B" />
     <DropShadowEffect x:Key="App.PanelShadowEffect" Color="#000000" BlurRadius="42" ShadowDepth="16" Direction="270" Opacity="0.22" />
 </ResourceDictionary>

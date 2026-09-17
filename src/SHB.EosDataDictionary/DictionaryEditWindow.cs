@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using SHB.EosDataDictionary.Models;
 using SHB.EosDataDictionary.Services;
+using SHB.EosDataDictionary.ViewModels;
 
 namespace SHB.EosDataDictionary
 {
@@ -15,6 +16,7 @@ namespace SHB.EosDataDictionary
         private readonly TableMetadata _table;
         private readonly FieldMetadata _field;
         private readonly Dictionary<string, FrameworkElement> _editors;
+        private Border _suggestionPanel;
 
         /// <summary>XMZADD 20260831 初始化本地字典编辑窗口，人工保存仅更新本机 SQLite 和当前内存快照。</summary>
         public DictionaryEditWindow(string databasePath, string scopeKey, TableMetadata table, FieldMetadata field)
@@ -32,9 +34,9 @@ namespace SHB.EosDataDictionary
             Title = field == null ? "编辑表字典" : "编辑字段字典";
             Style = Application.Current == null ? null : Application.Current.TryFindResource(typeof(Window)) as Style;
             Width = 700D;
-            Height = 610D;
+            Height = 720D;
             MinWidth = 620D;
-            MinHeight = 500D;
+            MinHeight = 600D;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             Content = BuildContent();
         }
@@ -44,8 +46,11 @@ namespace SHB.EosDataDictionary
         {
             var root = new Grid { Margin = new Thickness(20D) };
             root.SetResourceReference(Panel.BackgroundProperty, "App.WindowBackgroundBrush");
+            MetadataValue suggestion = GetSuggestedName();
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(12D) });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = suggestion == null ? new GridLength(0D) : new GridLength(12D) });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1D, GridUnitType.Star) });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(12D) });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -62,6 +67,13 @@ namespace SHB.EosDataDictionary
             Grid.SetRow(physicalBorder, 0);
             root.Children.Add(physicalBorder);
 
+            if (suggestion != null)
+            {
+                _suggestionPanel = BuildSuggestionPanel(suggestion);
+                Grid.SetRow(_suggestionPanel, 2);
+                root.Children.Add(_suggestionPanel);
+            }
+
             var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             var form = new Grid();
             form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(118D) });
@@ -75,15 +87,259 @@ namespace SHB.EosDataDictionary
             scroll.Content = form;
             var formBorder = new Border { Child = scroll, Padding = new Thickness(16D, 12D, 16D, 12D) };
             formBorder.Style = TryFindResource("PanelBorderStyle") as Style;
-            Grid.SetRow(formBorder, 2);
+            Grid.SetRow(formBorder, 4);
             root.Children.Add(formBorder);
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0D, 2D, 0D, 0D) };
             buttons.Children.Add(CreateButton("保存到本机", SaveButton_Click));
             buttons.Children.Add(CreateButton("取消", CancelButton_Click));
-            Grid.SetRow(buttons, 4);
+            Grid.SetRow(buttons, 6);
             root.Children.Add(buttons);
             return root;
+        }
+
+        /// <summary>XMZADD 20260917 构建参考译名审校区，使维护人员先核验证据再决定采纳、修改或拒绝。</summary>
+        private Border BuildSuggestionPanel(MetadataValue suggestion)
+        {
+            var content = new StackPanel();
+            var title = new TextBlock
+            {
+                Text = "参考译名（尚未确认）",
+                FontWeight = FontWeights.SemiBold
+            };
+            title.SetResourceReference(TextBlock.ForegroundProperty, "App.TextSecondaryBrush");
+            content.Children.Add(title);
+
+            var name = new TextBlock
+            {
+                Text = suggestion.Value ?? string.Empty,
+                FontSize = 18D,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0D, 6D, 0D, 4D),
+                TextWrapping = TextWrapping.Wrap
+            };
+            name.SetResourceReference(TextBlock.ForegroundProperty, "App.WarningTextBrush");
+            content.Children.Add(name);
+
+            var evidence = new TextBlock
+            {
+                Text = BuildSuggestionEvidenceText(suggestion),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0D, 0D, 0D, 8D)
+            };
+            evidence.SetResourceReference(TextBlock.ForegroundProperty, "App.TextMutedBrush");
+            content.Children.Add(evidence);
+
+            var actions = new StackPanel { Orientation = Orientation.Horizontal };
+            actions.Children.Add(CreateButton("采纳到正式名", AcceptSuggestedName_Click));
+            actions.Children.Add(CreateButton("拒绝此版本", RejectSuggestedName_Click));
+            var hint = new TextBlock
+            {
+                Text = "采纳后仍可修改，点击底部“保存到本机”才提交正式名称。",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8D, 0D, 0D, 0D)
+            };
+            hint.SetResourceReference(TextBlock.ForegroundProperty, "App.TextMutedBrush");
+            actions.Children.Add(hint);
+            content.Children.Add(actions);
+
+            var panel = new Border
+            {
+                Child = content,
+                Padding = new Thickness(16D, 12D, 16D, 12D)
+            };
+            panel.Style = TryFindResource("PanelBorderStyle") as Style;
+            return panel;
+        }
+
+        /// <summary>XMZADD 20260917 将参考译名证据压缩为安全摘要，只展示类型、规则、相对文件和行号。</summary>
+        private static string BuildSuggestionEvidenceText(MetadataValue suggestion)
+        {
+            var lines = new List<string>();
+            if (!string.IsNullOrWhiteSpace(suggestion.SourceType))
+            {
+                lines.Add("来源类型：" + suggestion.SourceType.Trim());
+            }
+            for (int index = 0; suggestion.Evidence != null && index < suggestion.Evidence.Count && index < 4; index++)
+            {
+                EvidenceItem item = suggestion.Evidence[index];
+                if (item == null)
+                {
+                    continue;
+                }
+                string location = EvidenceDisplayModel.SanitizeSourcePath(item.SourcePath);
+                if (item.SourceLine > 0)
+                {
+                    location += ":" + item.SourceLine;
+                }
+                lines.Add("证据：" + (item.SourceType ?? string.Empty) + " · " +
+                          (item.RuleName ?? string.Empty) + " · " + location);
+            }
+            return lines.Count == 0 ? "当前参考译名没有可展示的来源位置，请修改后再确认。" : string.Join("\r\n", lines.ToArray());
+        }
+
+        /// <summary>XMZADD 20260917 将参考译名预填到正式名称编辑框，保留人工复核和修改机会且不立即持久化。</summary>
+        private bool AcceptSuggestedName()
+        {
+            MetadataValue suggestion = GetSuggestedName();
+            FrameworkElement editor;
+            if (suggestion == null || !_editors.TryGetValue("ChineseName", out editor))
+            {
+                return false;
+            }
+            var textBox = editor as TextBox;
+            if (textBox == null)
+            {
+                return false;
+            }
+
+            textBox.Text = suggestion.Value ?? string.Empty;
+            textBox.Focus();
+            textBox.SelectAll();
+            return true;
+        }
+
+        /// <summary>XMZADD 20260917 拒绝当前参考译名证据版本并原子保存指纹事件，避免相同建议刷新后反复出现。</summary>
+        private bool RejectSuggestedName()
+        {
+            MetadataValue suggestion = GetSuggestedName();
+            if (suggestion == null)
+            {
+                return false;
+            }
+
+            string fingerprint = new NameSuggestionFingerprintService().CreateFingerprint(suggestion);
+            if (string.IsNullOrWhiteSpace(fingerprint))
+            {
+                return false;
+            }
+
+            DateTime createdAtUtc = DateTime.UtcNow;
+            string objectKey = (_table.SchemaName ?? string.Empty) + "." + (_table.ObjectName ?? string.Empty);
+            string fieldKey = _field == null ? string.Empty : _field.FieldName ?? string.Empty;
+            IList<string> rejected = GetRejectedSuggestionFingerprints();
+            string rejectedValue = BuildRejectedFingerprintValue(rejected, fingerprint);
+            var item = new DictionaryOverride
+            {
+                ScopeKey = _scopeKey,
+                ObjectName = _table.ObjectName ?? string.Empty,
+                FieldName = fieldKey,
+                ObjectKey = objectKey,
+                FieldKey = fieldKey,
+                PropertyName = "RejectedSuggestionFingerprint",
+                ManualValue = rejectedValue,
+                OriginalAutomaticValue = suggestion.Value ?? string.Empty,
+                IsLocked = true,
+                Remark = "人工拒绝参考译名证据版本",
+                UpdatedAt = createdAtUtc
+            };
+            var batch = new DictionaryChangeBatch
+            {
+                BatchId = Guid.NewGuid().ToString("N"),
+                AuthorGitHubUserId = string.Empty,
+                CreatedAtUtc = createdAtUtc
+            };
+            batch.Overrides.Add(item);
+            batch.Operations.Add(new DictionaryChangeOperation
+            {
+                OperationId = Guid.NewGuid().ToString("N"),
+                AuthorGitHubUserId = string.Empty,
+                ObjectKey = objectKey,
+                FieldKey = fieldKey,
+                PropertyName = "SuggestedChineseName",
+                OldValue = suggestion.Value ?? string.Empty,
+                NewValue = fingerprint,
+                ChangeKind = "RejectSuggestion",
+                CreatedAtUtc = createdAtUtc
+            });
+
+            _store.SaveOverridesWithPendingOperation(batch.Overrides, batch);
+            AddRejectedFingerprint(rejected, fingerprint);
+            SetSuggestedName(null);
+            if (_suggestionPanel != null)
+            {
+                _suggestionPanel.Visibility = Visibility.Collapsed;
+            }
+            return true;
+        }
+
+        /// <summary>XMZADD 20260917 处理采纳动作但不绕过正式名称的保存事务。</summary>
+        private void AcceptSuggestedName_Click(object sender, RoutedEventArgs e)
+        {
+            AcceptSuggestedName();
+        }
+
+        /// <summary>XMZADD 20260917 处理拒绝动作并立即记录可同步的否决决定。</summary>
+        private void RejectSuggestedName_Click(object sender, RoutedEventArgs e)
+        {
+            RejectSuggestedName();
+        }
+
+        /// <summary>XMZADD 20260917 读取当前编辑对象仍有效的参考译名。</summary>
+        private MetadataValue GetSuggestedName()
+        {
+            MetadataValue suggestion = _field == null ? _table.SuggestedChineseName : _field.SuggestedChineseName;
+            return suggestion == null || string.IsNullOrWhiteSpace(suggestion.Value) ? null : suggestion;
+        }
+
+        /// <summary>XMZADD 20260917 返回表或字段的可变否决指纹集合并兼容旧快照中的空集合。</summary>
+        private IList<string> GetRejectedSuggestionFingerprints()
+        {
+            if (_field == null)
+            {
+                if (_table.RejectedSuggestionFingerprints == null)
+                {
+                    _table.RejectedSuggestionFingerprints = new List<string>();
+                }
+                return _table.RejectedSuggestionFingerprints;
+            }
+            if (_field.RejectedSuggestionFingerprints == null)
+            {
+                _field.RejectedSuggestionFingerprints = new List<string>();
+            }
+            return _field.RejectedSuggestionFingerprints;
+        }
+
+        /// <summary>XMZADD 20260917 将累积否决指纹编码为稳定本地覆盖值，防止后一次否决覆盖历史决定。</summary>
+        private static string BuildRejectedFingerprintValue(IList<string> fingerprints, string current)
+        {
+            var values = new List<string>();
+            for (int index = 0; fingerprints != null && index < fingerprints.Count; index++)
+            {
+                AddRejectedFingerprint(values, fingerprints[index]);
+            }
+            AddRejectedFingerprint(values, current);
+            return string.Join("\n", values.ToArray());
+        }
+
+        /// <summary>XMZADD 20260917 以大小写不敏感方式追加唯一指纹，保证本地重复点击保持幂等。</summary>
+        private static void AddRejectedFingerprint(IList<string> fingerprints, string fingerprint)
+        {
+            if (fingerprints == null || string.IsNullOrWhiteSpace(fingerprint))
+            {
+                return;
+            }
+            for (int index = 0; index < fingerprints.Count; index++)
+            {
+                if (string.Equals(fingerprints[index], fingerprint, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+            fingerprints.Add(fingerprint);
+        }
+
+        /// <summary>XMZADD 20260917 清除当前表或字段的参考译名，正式名称不受拒绝动作影响。</summary>
+        private void SetSuggestedName(MetadataValue suggestion)
+        {
+            if (_field == null)
+            {
+                _table.SuggestedChineseName = suggestion;
+            }
+            else
+            {
+                _field.SuggestedChineseName = suggestion;
+            }
         }
 
         /// <summary>XMZADD 20260831 展示不可编辑的真实对象与字段物理信息，明确当前保存不会向 EOS 数据库写入任何内容。</summary>

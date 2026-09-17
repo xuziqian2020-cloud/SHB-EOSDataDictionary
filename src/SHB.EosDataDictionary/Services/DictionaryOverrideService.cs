@@ -146,6 +146,16 @@ namespace SHB.EosDataDictionary.Services
                         table.KeepWhenEmpty = keepWhenEmpty;
                     }
                     break;
+                case "RejectedSuggestionFingerprint":
+                    if (table.RejectedSuggestionFingerprints == null)
+                    {
+                        table.RejectedSuggestionFingerprints = new List<string>();
+                    }
+                    ApplyRejectedSuggestionOverride(table.RejectedSuggestionFingerprints, table.SuggestedChineseName, item, delegate
+                    {
+                        table.SuggestedChineseName = null;
+                    });
+                    break;
             }
         }
 
@@ -172,7 +182,88 @@ namespace SHB.EosDataDictionary.Services
                 case "Remark":
                     field.Remark = CreateManualValue(field.Remark, item);
                     break;
+                case "RejectedSuggestionFingerprint":
+                    if (field.RejectedSuggestionFingerprints == null)
+                    {
+                        field.RejectedSuggestionFingerprints = new List<string>();
+                    }
+                    ApplyRejectedSuggestionOverride(field.RejectedSuggestionFingerprints, field.SuggestedChineseName, item, delegate
+                    {
+                        field.SuggestedChineseName = null;
+                    });
+                    break;
             }
+        }
+
+        /// <summary>XMZADD 20260917 恢复本地否决指纹并仅清除证据版本完全匹配的当前参考译名。</summary>
+        private static void ApplyRejectedSuggestionOverride(
+            IList<string> rejectedFingerprints,
+            MetadataValue suggestion,
+            DictionaryOverride item,
+            Action clearSuggestion)
+        {
+            if (rejectedFingerprints == null || item == null)
+            {
+                return;
+            }
+
+            string[] values = (item.ManualValue ?? string.Empty).Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int index = 0; index < values.Length; index++)
+            {
+                string fingerprint = values[index].Trim();
+                if (IsSha256Fingerprint(fingerprint))
+                {
+                    AddRejectedFingerprint(rejectedFingerprints, fingerprint);
+                }
+            }
+            if (suggestion == null)
+            {
+                return;
+            }
+
+            string currentFingerprint = new NameSuggestionFingerprintService().CreateFingerprint(suggestion);
+            for (int index = 0; index < rejectedFingerprints.Count; index++)
+            {
+                if (string.Equals(rejectedFingerprints[index], currentFingerprint, StringComparison.OrdinalIgnoreCase))
+                {
+                    clearSuggestion();
+                    return;
+                }
+            }
+        }
+
+        /// <summary>XMZADD 20260917 追加唯一否决指纹，使重复加载本地覆盖不会产生重复记录。</summary>
+        private static void AddRejectedFingerprint(IList<string> fingerprints, string fingerprint)
+        {
+            for (int index = 0; index < fingerprints.Count; index++)
+            {
+                if (string.Equals(fingerprints[index], fingerprint, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+            fingerprints.Add(fingerprint);
+        }
+
+        /// <summary>XMZADD 20260917 验证本地否决键是完整 SHA-256 十六进制值，损坏覆盖不得隐藏候选名称。</summary>
+        private static bool IsSha256Fingerprint(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.Length != 64)
+            {
+                return false;
+            }
+            for (int index = 0; index < value.Length; index++)
+            {
+                char current = value[index];
+                bool isDigit = current >= '0' && current <= '9';
+                bool isLower = current >= 'a' && current <= 'f';
+                bool isUpper = current >= 'A' && current <= 'F';
+                if (!isDigit && !isLower && !isUpper)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /// <summary>XMZADD 20260901 仅从明确分类名称恢复人工规则，避免数字枚举文本被误认为已审核分类。</summary>
@@ -204,7 +295,6 @@ namespace SHB.EosDataDictionary.Services
             return false;
         }
 
-        /// <summary>XMZADD 20260831 生成带来源和原自动值的人工维护结果，便于用户追溯覆盖前的推测依据。</summary>
         /// <summary>XMZADD 20260831 判断表级人工维护属性是否仍属于允许编辑的业务解释，避免废弃属性在刷新后被误认为可用。</summary>
         private static bool IsTablePropertySupported(string propertyName)
         {
@@ -217,6 +307,7 @@ namespace SHB.EosDataDictionary.Services
                 case "Remark":
                 case "Category":
                 case "KeepWhenEmpty":
+                case "RejectedSuggestionFingerprint":
                     return true;
                 default:
                     return false;
@@ -234,12 +325,14 @@ namespace SHB.EosDataDictionary.Services
                 case "Usage":
                 case "RelationSummary":
                 case "Remark":
+                case "RejectedSuggestionFingerprint":
                     return true;
                 default:
                     return false;
             }
         }
 
+        /// <summary>XMZADD 20260831 生成带来源和原自动值的人工维护结果，便于用户追溯覆盖前的推测依据。</summary>
         private static MetadataValue CreateManualValue(MetadataValue automaticValue, DictionaryOverride item)
         {
             string originalAutomaticValue = string.Empty;

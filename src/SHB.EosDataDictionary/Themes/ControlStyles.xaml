@@ -48,7 +48,7 @@
         <Setter Property="Background" Value="{DynamicResource App.WindowBackgroundBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource App.TextPrimaryBrush}" />
         <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
-        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontSize" Value="14" />
         <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
         <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
     </Style>
@@ -71,14 +71,14 @@
 
     <Style x:Key="SectionTitleTextStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource App.TextPrimaryBrush}" />
-        <Setter Property="FontSize" Value="15" />
-        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
     <Style x:Key="MutedTextStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource App.TextMutedBrush}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="13" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
@@ -117,7 +117,7 @@
         <Setter Property="MinWidth" Value="54" />
         <Setter Property="Padding" Value="5,0" />
         <Setter Property="Margin" Value="5,4,5,0" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="13" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="TextAlignment" Value="Center" />
         <Setter Property="ToolTip" Value="在本列中模糊筛选" />
@@ -301,6 +301,7 @@
 
     <Style TargetType="{x:Type CheckBox}">
         <Setter Property="Foreground" Value="{DynamicResource App.TextSecondaryBrush}" />
+        <Setter Property="FontSize" Value="13" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="Template">
             <Setter.Value>
@@ -472,7 +473,7 @@
         <Setter Property="HeadersVisibility" Value="Column" />
         <Setter Property="RowHeight" Value="46" />
         <Setter Property="ColumnHeaderHeight" Value="76" />
-        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontSize" Value="14" />
         <Setter Property="FontWeight" Value="Normal" />
         <Setter Property="ColumnWidth" Value="SizeToCells" />
         <Setter Property="HorizontalScrollBarVisibility" Value="Auto" />

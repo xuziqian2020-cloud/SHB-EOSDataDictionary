@@ -54,6 +54,28 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsTrue(service.MatchesTable(row, filters));
         }
 
+        /// <summary>XMZADD 20260917 验证参考译名、冲突状态和消费模块均可独立执行表头筛选。</summary>
+        [TestMethod]
+        public void MatchesTable_FiltersSuggestionConflictAndUsedModules()
+        {
+            var table = new TableMetadata
+            {
+                ObjectName = "T_STORAGE",
+                SuggestedChineseName = new MetadataValue { Value = "仓储区定义" }
+            };
+            table.AlternativeChineseNames.Add(new MetadataValue { Value = "存储区域定义" });
+            table.UsedByModules.Add(new MetadataValue { Value = "仓储与库存" });
+            var row = new TableDisplayModel(table);
+            var service = new ColumnFilterService();
+
+            Assert.IsTrue(service.MatchesTable(row,
+                new Dictionary<string, string> { { "SuggestedChineseName", "仓储区" } }));
+            Assert.IsTrue(service.MatchesTable(row,
+                new Dictionary<string, string> { { "ConflictText", "有冲突" } }));
+            Assert.IsTrue(service.MatchesTable(row,
+                new Dictionary<string, string> { { "UsedByModulesText", "库存" } }));
+        }
+
         /// <summary>XMZADD 20260828 验证字段筛选仅从指定字段属性中执行模糊匹配。</summary>
         [TestMethod]
         public void MatchesField_UsesSpecifiedColumnOnly()
@@ -79,6 +101,28 @@ namespace SHB.EosDataDictionary.Tests
             var filters = new Dictionary<string, string> { { "KeyText", "主键" } };
 
             Assert.IsTrue(service.MatchesField(row, filters));
+        }
+
+        /// <summary>XMZADD 20260917 验证字段参考译名、冲突状态和实际使用状态可按列筛选。</summary>
+        [TestMethod]
+        public void MatchesField_FiltersSuggestionConflictAndActualUsage()
+        {
+            var field = new FieldMetadata
+            {
+                FieldName = "Owner_Company_ID",
+                SuggestedChineseName = new MetadataValue { Value = "货主公司ID" },
+                Usage = new MetadataValue { Value = "业务代码读取" }
+            };
+            field.AlternativeChineseNames.Add(new MetadataValue { Value = "所属公司ID" });
+            var row = new FieldDisplayModel(field);
+            var service = new ColumnFilterService();
+
+            Assert.IsTrue(service.MatchesField(row,
+                new Dictionary<string, string> { { "SuggestedChineseName", "货主" } }));
+            Assert.IsTrue(service.MatchesField(row,
+                new Dictionary<string, string> { { "ConflictText", "有冲突" } }));
+            Assert.IsTrue(service.MatchesField(row,
+                new Dictionary<string, string> { { "ActualUsageText", "已使用" } }));
         }
 
         /// <summary>XMZADD 20260828 验证关联关系列表按父表列单独筛选。</summary>

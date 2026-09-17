@@ -162,6 +162,123 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual("当前显示：0 / 当前范围：1 / 全部：5 张表", viewModel.TableCountText);
         }
 
+        /// <summary>XMZADD 20260917 验证参考译名、消费模块和证据说明参与当前 EOS 实体范围内的综合搜索。</summary>
+        [TestMethod]
+        public void EntityScope_SearchesSuggestionUsedModulesAndEvidenceInsideCurrentScope()
+        {
+            SnapshotData snapshot = CreateProjectEvidenceSnapshot();
+            TableMetadata entity = FindMetadata(snapshot, "T_ENTITY");
+            entity.SuggestedChineseName = new MetadataValue
+            {
+                Value = "仓储区定义",
+                Status = ConfidenceStatus.Guessed,
+                SourceSummary = "根据仓储区维护窗口推断",
+                Evidence = new List<EvidenceItem>
+                {
+                    new EvidenceItem { RuleName = "IdentifierTranslation", Explanation = "仓储区布局维护" }
+                }
+            };
+            entity.UsedByModules.Add(new MetadataValue { Value = "仓储与库存" });
+            var viewModel = new MainViewModel();
+            viewModel.LoadSnapshotForTesting(snapshot);
+            viewModel.ShowEosEntityObjectsOnly = true;
+
+            viewModel.SearchTables("仓储区定义");
+            Assert.AreEqual(1, viewModel.TableRows.Count);
+            Assert.IsTrue(viewModel.TableRows[0].HasEntity);
+
+            viewModel.SearchTables("仓储与库存");
+            Assert.AreEqual(1, viewModel.TableRows.Count);
+
+            viewModel.SearchTables("布局维护");
+            Assert.AreEqual(1, viewModel.TableRows.Count);
+
+            viewModel.SearchTables("T_MANUAL");
+            Assert.AreEqual(0, viewModel.TableRows.Count);
+        }
+
+        /// <summary>XMZADD 20260917 验证缺正式名、含参考译名和冲突筛选可与当前对象范围组合。</summary>
+        [TestMethod]
+        public void SemanticNameFilters_CombineWithoutEscapingCurrentScope()
+        {
+            var pending = CreateTable("T_PENDING", ConfidenceStatus.PendingConfirmation);
+            pending.ChineseName.Value = string.Empty;
+            pending.SuggestedChineseName = new MetadataValue { Value = "待确认订单", Status = ConfidenceStatus.Guessed };
+            var conflict = CreateTable("T_CONFLICT", ConfidenceStatus.CodeEvidence);
+            conflict.ChineseName.Value = "采购订单";
+            conflict.SuggestedChineseName = new MetadataValue { Value = "采购单", Status = ConfidenceStatus.Guessed };
+            conflict.AlternativeChineseNames.Add(new MetadataValue { Value = "采购业务单" });
+            var ordinary = CreateTable("T_ORDINARY", ConfidenceStatus.CodeEvidence);
+            ordinary.ChineseName.Value = "普通订单";
+            var snapshot = new SnapshotData();
+            snapshot.Tables.Add(pending);
+            snapshot.Tables.Add(conflict);
+            snapshot.Tables.Add(ordinary);
+            var viewModel = new MainViewModel();
+            viewModel.LoadSnapshotForTesting(snapshot);
+
+            viewModel.ShowOnlyMissingOfficialNames = true;
+            viewModel.ShowOnlyWithSuggestions = true;
+
+            Assert.AreEqual(1, viewModel.TableRows.Count);
+            Assert.AreEqual("T_PENDING", viewModel.TableRows[0].ObjectName);
+
+            viewModel.ShowOnlyMissingOfficialNames = false;
+            viewModel.ShowOnlyConflicts = true;
+
+            Assert.AreEqual(1, viewModel.TableRows.Count);
+            Assert.AreEqual("T_CONFLICT", viewModel.TableRows[0].ObjectName);
+        }
+
+        /// <summary>XMZADD 20260917 验证业务实际使用字段筛选仍允许在参考译名、枚举中文和证据摘要中搜索。</summary>
+        [TestMethod]
+        public void ActualUsedFieldFilter_SearchesSuggestionEnumAndEvidence()
+        {
+            TableMetadata table = CreateTable("T_FIELD_SEARCH", ConfidenceStatus.CodeEvidence);
+            var used = new FieldMetadata
+            {
+                FieldName = "Owner_Company_ID",
+                OwnerTableName = table.ObjectName,
+                SuggestedChineseName = new MetadataValue
+                {
+                    Value = "货主公司ID",
+                    SourceSummary = "货主维度业务字段",
+                    Evidence = new List<EvidenceItem>
+                    {
+                        new EvidenceItem { RuleName = "GridColumnCaption", Explanation = "货主公司筛选条件" }
+                    }
+                },
+                Usage = new MetadataValue { Value = "业务代码读取" }
+            };
+            used.EnumItems.Add(new EnumItemMetadata
+            {
+                Value = "1",
+                ChineseName = new MetadataValue { Value = "启用" }
+            });
+            table.Fields.Add(used);
+            table.Fields.Add(new FieldMetadata
+            {
+                FieldName = "UNUSED_COLUMN",
+                OwnerTableName = table.ObjectName,
+                ChineseName = new MetadataValue { Value = "未使用列" }
+            });
+            var snapshot = new SnapshotData();
+            snapshot.Tables.Add(table);
+            var viewModel = new MainViewModel();
+            viewModel.LoadSnapshotForTesting(snapshot);
+            viewModel.ShowOnlyActualUsedFields = true;
+
+            Assert.AreEqual(1, viewModel.FieldRows.Count);
+            Assert.AreEqual("Owner_Company_ID", viewModel.FieldRows[0].FieldName);
+
+            viewModel.SearchFields("货主公司ID");
+            Assert.AreEqual(1, viewModel.FieldRows.Count);
+            viewModel.SearchFields("启用");
+            Assert.AreEqual(1, viewModel.FieldRows.Count);
+            viewModel.SearchFields("筛选条件");
+            Assert.AreEqual(1, viewModel.FieldRows.Count);
+        }
+
         /// <summary>XMZADD 20260903 验证用户主动关闭显示全部后仍可使用原有项目证据范围。</summary>
         [TestMethod]
         public void ShowAllObjects_False_HidesIsolatedRuleTable()
@@ -513,6 +630,20 @@ namespace SHB.EosDataDictionary.Tests
             snapshot.Tables.Add(related);
             snapshot.Tables.Add(isolated);
             return snapshot;
+        }
+
+        /// <summary>XMZADD 20260917 按对象名读取测试快照中的表元数据。</summary>
+        private static TableMetadata FindMetadata(SnapshotData snapshot, string objectName)
+        {
+            for (int index = 0; index < snapshot.Tables.Count; index++)
+            {
+                if (snapshot.Tables[index] != null && snapshot.Tables[index].ObjectName == objectName)
+                {
+                    return snapshot.Tables[index];
+                }
+            }
+            Assert.Fail("测试快照中未找到表：" + objectName);
+            return null;
         }
 
         /// <summary>XMZADD 20260831 构造仅含筛选所需属性的测试表，避免测试依赖演示数据。</summary>

@@ -290,5 +290,48 @@ namespace SHB.EosDataDictionary.Tests
                 }
             }
         }
+
+        /// <summary>XMZADD 20260917 验证旧快照缺少否决集合时仍能恢复本地决定并隐藏完全匹配的参考译名。</summary>
+        [TestMethod]
+        public void ApplyOverrides_MissingRejectedCollection_InitializesAndAppliesFingerprint()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "shb-overrides-rejected-" + Guid.NewGuid().ToString("N") + ".db");
+            const string scope = "dev|SHB";
+            try
+            {
+                var suggestion = new MetadataValue { Value = "仓储区定义" };
+                string fingerprint = new NameSuggestionFingerprintService().CreateFingerprint(suggestion);
+                var store = new LocalDictionaryStore(path);
+                store.SaveOverride(new DictionaryOverride
+                {
+                    ScopeKey = scope,
+                    ObjectName = "T_STORAGE",
+                    FieldName = string.Empty,
+                    PropertyName = "RejectedSuggestionFingerprint",
+                    ManualValue = fingerprint
+                });
+                var table = new TableMetadata
+                {
+                    ObjectName = "T_STORAGE",
+                    SuggestedChineseName = suggestion,
+                    RejectedSuggestionFingerprints = null
+                };
+                var snapshot = new SnapshotData();
+                snapshot.Tables.Add(table);
+
+                DictionaryOverrideService.ApplyOverrides(snapshot, store, scope);
+
+                Assert.IsNotNull(table.RejectedSuggestionFingerprints);
+                Assert.AreEqual(fingerprint, table.RejectedSuggestionFingerprints[0]);
+                Assert.IsNull(table.SuggestedChineseName);
+            }
+            finally
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+        }
     }
 }

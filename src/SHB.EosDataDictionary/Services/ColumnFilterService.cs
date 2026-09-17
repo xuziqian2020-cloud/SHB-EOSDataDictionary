@@ -80,9 +80,13 @@ namespace SHB.EosDataDictionary.Services
             {
                 case "StatusText": return row.StatusText;
                 case "ChineseName": return row.ChineseName;
+                case "OfficialChineseName": return row.OfficialChineseName;
+                case "SuggestedChineseName": return row.SuggestedChineseName;
+                case "ConflictText": return row.ConflictText;
                 case "ObjectName": return row.ObjectName;
                 case "ObjectTypeText": return row.ObjectTypeText;
                 case "ModuleName": return row.ModuleName;
+                case "UsedByModulesText": return row.UsedByModulesText;
                 case "EntityName": return row.EntityName;
                 default: return string.Empty;
             }
@@ -96,6 +100,10 @@ namespace SHB.EosDataDictionary.Services
                 case "StatusText": return row.StatusText;
                 case "FieldName": return row.FieldName;
                 case "ChineseName": return row.ChineseName;
+                case "OfficialChineseName": return row.OfficialChineseName;
+                case "SuggestedChineseName": return row.SuggestedChineseName;
+                case "ConflictText": return row.ConflictText;
+                case "ActualUsageText": return row.ActualUsageText;
                 case "OwnerTableName": return row.OwnerTableName;
                 case "EntityPropertyName": return row.EntityPropertyName;
                 case "DataType": return row.DataType;

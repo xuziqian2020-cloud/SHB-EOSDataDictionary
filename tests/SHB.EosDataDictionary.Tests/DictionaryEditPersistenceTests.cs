@@ -392,6 +392,114 @@ END;";
             }
         }
 
+        /// <summary>XMZADD 20260917 验证采纳参考译名只预填正式名编辑框，仍由普通保存批次提交人工正式名。</summary>
+        [TestMethod]
+        public void AcceptSuggestedName_PrefillsOfficialEditorWithoutImmediatePersistence()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "shb-edit-suggestion-" + Guid.NewGuid().ToString("N") + ".db");
+            try
+            {
+                RunInSta(() =>
+                {
+                    var table = new TableMetadata
+                    {
+                        SchemaName = "dbo",
+                        ObjectName = "T_STORAGE",
+                        SuggestedChineseName = new MetadataValue { Value = "仓储区定义" }
+                    };
+                    var window = new SHB.EosDataDictionary.DictionaryEditWindow(path, "dev|SHB", table, null);
+                    try
+                    {
+                        Assert.IsTrue(InvokeBooleanMethod(window, "AcceptSuggestedName"));
+                        var editor = (TextBox)GetEditors(window)["ChineseName"];
+                        Assert.AreEqual("仓储区定义", editor.Text);
+                        Assert.AreEqual(0, new LocalDictionaryStore(path).LoadPendingOperations().Count);
+
+                        Assert.IsTrue(InvokeSaveChanges(window));
+                        DictionaryChangeBatch batch = new LocalDictionaryStore(path).LoadPendingOperations()[0].Batch;
+                        Assert.AreEqual("Set", batch.Operations[0].ChangeKind);
+                        Assert.AreEqual("ChineseName", batch.Operations[0].PropertyName);
+                        Assert.AreEqual("仓储区定义", batch.Operations[0].NewValue);
+                    }
+                    finally
+                    {
+                        window.Close();
+                    }
+                });
+            }
+            finally
+            {
+                DeletePath(path);
+            }
+        }
+
+        /// <summary>XMZADD 20260917 验证拒绝参考译名持久化稳定指纹、清除当前匹配建议并生成待同步操作。</summary>
+        [TestMethod]
+        public void RejectSuggestedName_PersistsFingerprintAndClearsMatchingSuggestion()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "shb-edit-reject-" + Guid.NewGuid().ToString("N") + ".db");
+            try
+            {
+                RunInSta(() =>
+                {
+                    MetadataValue suggestion = new MetadataValue
+                    {
+                        Value = "仓储区定义",
+                        Status = ConfidenceStatus.Guessed,
+                        Evidence = new List<EvidenceItem>
+                        {
+                            new EvidenceItem
+                            {
+                                SourceType = "EOS业务源码",
+                                RuleName = "GridColumnCaption",
+                                SourcePath = "ERP/Warehouse/Storage.vb",
+                                SourceLine = 26
+                            }
+                        }
+                    };
+                    var table = new TableMetadata
+                    {
+                        SchemaName = "dbo",
+                        ObjectName = "T_STORAGE",
+                        SuggestedChineseName = suggestion
+                    };
+                    string fingerprint = new NameSuggestionFingerprintService().CreateFingerprint(suggestion);
+                    var window = new SHB.EosDataDictionary.DictionaryEditWindow(path, "dev|SHB", table, null);
+                    try
+                    {
+                        Assert.IsTrue(InvokeBooleanMethod(window, "RejectSuggestedName"));
+
+                        Assert.IsNull(table.SuggestedChineseName);
+                        Assert.AreEqual(1, table.RejectedSuggestionFingerprints.Count);
+                        Assert.AreEqual(fingerprint, table.RejectedSuggestionFingerprints[0]);
+                        PendingDictionaryOperation pending = new LocalDictionaryStore(path).LoadPendingOperations()[0];
+                        Assert.AreEqual("RejectSuggestion", pending.Batch.Operations[0].ChangeKind);
+                        Assert.AreEqual("SuggestedChineseName", pending.Batch.Operations[0].PropertyName);
+                        Assert.AreEqual(fingerprint, pending.Batch.Operations[0].NewValue);
+
+                        var reloaded = new TableMetadata
+                        {
+                            ObjectName = "T_STORAGE",
+                            SuggestedChineseName = suggestion
+                        };
+                        var snapshot = new SnapshotData();
+                        snapshot.Tables.Add(reloaded);
+                        DictionaryOverrideService.ApplyOverrides(snapshot, new LocalDictionaryStore(path), "dev|SHB");
+                        Assert.IsNull(reloaded.SuggestedChineseName);
+                        Assert.AreEqual(fingerprint, reloaded.RejectedSuggestionFingerprints[0]);
+                    }
+                    finally
+                    {
+                        window.Close();
+                    }
+                });
+            }
+            finally
+            {
+                DeletePath(path);
+            }
+        }
+
         /// <summary>XMZADD 20260901 调用编辑窗口实际使用的私有纯函数以验证持久化批次契约。</summary>
         private static DictionaryChangeBatch InvokeCreateChangeBatch(
             string scopeKey,
@@ -413,6 +521,18 @@ END;";
         {
             MethodInfo method = typeof(SHB.EosDataDictionary.DictionaryEditWindow).GetMethod(
                 "SaveChanges",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(method);
+            return (bool)method.Invoke(window, null);
+        }
+
+        /// <summary>XMZADD 20260917 调用编辑窗口的参考译名决策流程并返回是否产生有效动作。</summary>
+        private static bool InvokeBooleanMethod(
+            SHB.EosDataDictionary.DictionaryEditWindow window,
+            string methodName)
+        {
+            MethodInfo method = typeof(SHB.EosDataDictionary.DictionaryEditWindow).GetMethod(
+                methodName,
                 BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.IsNotNull(method);
             return (bool)method.Invoke(window, null);

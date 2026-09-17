@@ -150,7 +150,7 @@ namespace SHB.EosDataDictionary.Tests
             }
         }
 
-        /// <summary>XMZADD 20260831 验证资源树表项会提供中文主标题与物理表名副标题，并对空中文名显示暂无中文名称。</summary>
+        /// <summary>XMZADD 20260917 验证资源树严格展示正式中文名，空正式名明确标记为待确认。</summary>
         [TestMethod]
         public void TableDisplayModel_UsesChineseTreeTitleAndPhysicalNameSubtitle()
         {
@@ -166,7 +166,7 @@ namespace SHB.EosDataDictionary.Tests
                 ChineseName = new MetadataValue { Value = "采购订单", Status = ConfidenceStatus.CodeEvidence }
             });
 
-            Assert.AreEqual("暂无中文名称", unnamed.TreeTitle);
+            Assert.AreEqual("待确认", unnamed.TreeTitle);
             Assert.AreEqual("T_PENDING", unnamed.TreeSubtitle);
             Assert.AreEqual("采购订单", named.TreeTitle);
             Assert.AreEqual("T_ORDER", named.TreeSubtitle);
@@ -216,9 +216,67 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual(1, viewModel.RelationRows.Count);
             Assert.AreEqual(1, viewModel.EvidenceRows.Count);
             Assert.AreEqual("EOS源码", viewModel.EvidenceRows[0].SourceType);
-            Assert.AreEqual("D:\\EOS\\Order.cs", viewModel.EvidenceRows[0].SourcePath);
+            Assert.AreEqual("Order.cs", viewModel.EvidenceRows[0].SourcePath);
             Assert.AreEqual(28, viewModel.EvidenceRows[0].SourceLine);
             Assert.AreEqual("SqlTableUsage", viewModel.EvidenceRows[0].RuleName);
+        }
+
+        /// <summary>XMZADD 20260917 验证表字段展示模型严格分离正式名、参考译名、冲突和实际使用状态。</summary>
+        [TestMethod]
+        public void DisplayModels_SeparateOfficialSuggestionConflictAndUsage()
+        {
+            var table = new TableMetadata
+            {
+                ObjectName = "Account_Storage_Part_Definition",
+                ChineseName = new MetadataValue { Value = string.Empty, Status = ConfidenceStatus.PendingConfirmation },
+                SuggestedChineseName = new MetadataValue { Value = "仓储区定义", Status = ConfidenceStatus.Guessed },
+                EntityName = new MetadataValue { Value = "t_Account_Storage_Part_Definition" }
+            };
+            table.AlternativeChineseNames.Add(new MetadataValue { Value = "存储区域定义" });
+            table.UsedByModules.Add(new MetadataValue { Value = "采购管理" });
+            table.UsedByModules.Add(new MetadataValue { Value = "仓储与库存" });
+            var field = new FieldMetadata
+            {
+                FieldName = "Owner_Company_ID",
+                ChineseName = new MetadataValue { Value = string.Empty, Status = ConfidenceStatus.PendingConfirmation },
+                SuggestedChineseName = new MetadataValue { Value = "货主公司ID", Status = ConfidenceStatus.Guessed },
+                Usage = new MetadataValue { Value = "业务代码读取" }
+            };
+            field.AlternativeChineseNames.Add(new MetadataValue { Value = "所属公司ID" });
+
+            var tableRow = new TableDisplayModel(table);
+            var fieldRow = new FieldDisplayModel(field);
+
+            Assert.AreEqual("待确认", tableRow.ChineseName);
+            Assert.AreEqual(string.Empty, tableRow.OfficialChineseName);
+            Assert.AreEqual("仓储区定义", tableRow.SuggestedChineseName);
+            Assert.IsFalse(tableRow.HasOfficialName);
+            Assert.IsTrue(tableRow.HasSuggestion);
+            Assert.IsTrue(tableRow.IsConflict);
+            Assert.IsTrue(tableRow.HasEntity);
+            Assert.AreEqual("仓储与库存、采购管理", tableRow.UsedByModulesText);
+            Assert.AreEqual("待确认", fieldRow.ChineseName);
+            Assert.AreEqual("货主公司ID", fieldRow.SuggestedChineseName);
+            Assert.IsTrue(fieldRow.IsConflict);
+            Assert.IsTrue(fieldRow.IsActualUsed);
+            Assert.AreEqual("业务已使用", fieldRow.ActualUsageText);
+        }
+
+        /// <summary>XMZADD 20260917 验证证据展示只公开相对文件名并压缩多行长说明。</summary>
+        [TestMethod]
+        public void EvidenceDisplayModel_HidesAbsolutePathAndLongSourceText()
+        {
+            var explanation = new string('业', 280) + "\r\n不应显示的下一行";
+            var row = new EvidenceDisplayModel(new EvidenceItem
+            {
+                SourcePath = "D:\\EOS\\ERP\\Order.cs",
+                Explanation = explanation
+            });
+
+            Assert.AreEqual("Order.cs", row.SourcePath);
+            Assert.IsFalse(row.SourcePath.Contains(":"));
+            Assert.IsFalse(row.Explanation.Contains("\r"));
+            Assert.IsTrue(row.Explanation.Length <= 241);
         }
 
         /// <summary>XMZADD 20260831 验证同一 AI 证据被多个元数据复用时来源明细只保留一条可核验记录。</summary>

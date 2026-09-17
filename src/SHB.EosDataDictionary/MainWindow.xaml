@@ -17,7 +17,7 @@
         Background="{DynamicResource App.WindowBackgroundBrush}"
         Foreground="{DynamicResource App.TextPrimaryBrush}"
         FontFamily="Microsoft YaHei UI"
-        FontSize="13"
+        FontSize="14"
         TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="ClearType">
     <shell:WindowChrome.WindowChrome>
@@ -29,11 +29,26 @@
         <Style x:Key="ColumnHeaderLabelStyle" TargetType="TextBlock">
             <Setter Property="Height" Value="30" />
             <Setter Property="Foreground" Value="{DynamicResource App.TextSecondaryBrush}" />
-            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontSize" Value="14" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="TextAlignment" Value="Center" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="SuggestedDataGridTextStyle" TargetType="TextBlock" BasedOn="{StaticResource CenteredDataGridTextStyle}">
+            <Setter Property="Foreground" Value="{DynamicResource App.WarningTextBrush}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <Style x:Key="ConflictDataGridTextStyle" TargetType="TextBlock" BasedOn="{StaticResource CenteredDataGridTextStyle}">
+            <Setter Property="Foreground" Value="{DynamicResource App.TextMutedBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsConflict}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource App.StatusConflictBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="ColumnHeaderStackStyle" TargetType="StackPanel">
@@ -76,17 +91,20 @@
             <Grid Height="22" HorizontalAlignment="Center" VerticalAlignment="Center">
                 <Grid.Style>
                     <Style TargetType="Grid">
-                        <Setter Property="Width" Value="54" />
+                        <Setter Property="Width" Value="78" />
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding StatusText}" Value="代码依据">
-                                <Setter Property="Width" Value="56" />
+                                <Setter Property="Width" Value="78" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding StatusText}" Value="推测（存在冲突）">
+                                <Setter Property="Width" Value="108" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Grid.Style>
                 <Border Background="{Binding StatusBrush}" CornerRadius="3" Opacity="0.16" />
                 <Border BorderBrush="{Binding StatusBrush}" BorderThickness="1" CornerRadius="3" Opacity="0.48" />
-                <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusBrush}" FontSize="10" FontWeight="Bold" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusBrush}" FontSize="11" FontWeight="SemiBold" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Grid>
         </DataTemplate>
 
@@ -105,8 +123,8 @@
                 <Rectangle Width="6" Height="6" Fill="{DynamicResource App.StatusCodeBrush}" RenderTransformOrigin="0.5,0.5">
                     <Rectangle.RenderTransform><RotateTransform Angle="45" /></Rectangle.RenderTransform>
                 </Rectangle>
-                <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                <TextBlock Grid.Column="2" Text="{Binding StatusText}" Foreground="{Binding StatusBrush}" FontSize="10" VerticalAlignment="Center" Margin="8,0,4,0" />
+                <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="2" Text="{Binding StatusText}" Foreground="{Binding StatusBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,4,0" />
             </Grid>
         </HierarchicalDataTemplate>
 
@@ -115,8 +133,8 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="14" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                 <TextBlock Text="›" Foreground="{DynamicResource App.TextMutedBrush}" FontSize="15" VerticalAlignment="Center" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding TreeTitle}" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding TreeTitle}" />
-                    <TextBlock Text="{Binding TreeSubtitle}" Foreground="{DynamicResource App.TextMutedBrush}" FontSize="10" Margin="0,1,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding TreeSubtitle}" />
+                    <TextBlock Text="{Binding TreeTitle}" FontSize="13" FontWeight="Medium" TextTrimming="CharacterEllipsis" ToolTip="{Binding TreeTitle}" />
+                    <TextBlock Text="{Binding TreeSubtitle}" Foreground="{DynamicResource App.TextMutedBrush}" FontSize="11" Margin="0,1,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding TreeSubtitle}" />
                 </StackPanel>
             </Grid>
         </DataTemplate>
@@ -256,13 +274,20 @@
 
             <Border Grid.Column="2" Style="{StaticResource PanelBorderStyle}">
                 <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="48" /><RowDefinition Height="54" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="82" /><RowDefinition Height="54" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                     <Border BorderBrush="{DynamicResource App.BorderBrush}" BorderThickness="0,0,0,1" Padding="14,0">
                         <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="42" /><RowDefinition Height="40" /></Grid.RowDefinitions>
                             <TextBlock Text="数据表" Style="{StaticResource SectionTitleTextStyle}" />
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                <CheckBox x:Name="ShowEosEntityObjectsOnlyCheckBox" Content="仅显示 EOS 有对应实体" IsChecked="{Binding ShowEosEntityObjectsOnly, Mode=TwoWay}" FontSize="12" Margin="0,0,14,0" />
-                                <CheckBox x:Name="ShowAllObjectsCheckBox" Content="显示全部对象" IsChecked="{Binding ShowAllObjects, Mode=TwoWay}" FontSize="12" Margin="0,0,14,0" />
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <CheckBox x:Name="ShowEosEntityObjectsOnlyCheckBox" Content="仅 EOS 实体" IsChecked="{Binding ShowEosEntityObjectsOnly, Mode=TwoWay}" Margin="0,0,14,0" ToolTip="仅显示能够追溯到 EOS 实体类的物理表" />
+                                <CheckBox x:Name="ShowAllObjectsCheckBox" Content="全部对象" IsChecked="{Binding ShowAllObjects, Mode=TwoWay}" ToolTip="在全部物理表范围内搜索和筛选" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                <TextBlock Text="名称审阅" Foreground="{DynamicResource App.TextMutedBrush}" FontSize="12" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                <CheckBox x:Name="ShowOnlyMissingOfficialNamesCheckBox" Content="缺正式名" IsChecked="{Binding ShowOnlyMissingOfficialNames, Mode=TwoWay}" Margin="0,0,14,0" />
+                                <CheckBox x:Name="ShowOnlyWithSuggestionsCheckBox" Content="有参考译名" IsChecked="{Binding ShowOnlyWithSuggestions, Mode=TwoWay}" Margin="0,0,14,0" />
+                                <CheckBox x:Name="ShowOnlyConflictsCheckBox" Content="有冲突" IsChecked="{Binding ShowOnlyConflicts, Mode=TwoWay}" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -283,25 +308,34 @@
                         </TextBlock>
                     </Grid>
 
-                    <DataGrid x:Name="TablesGrid" Grid.Row="2" ItemsSource="{Binding TableRows}" SelectedItem="{Binding SelectedTable, Mode=TwoWay}" SelectionMode="Single" SelectionUnit="FullRow" MouseDoubleClick="TablesGrid_MouseDoubleClick" PreviewMouseDoubleClick="DataGrid_PreviewMouseDoubleClick" PreviewMouseRightButtonDown="DataGrid_PreviewMouseRightButtonDown" PreviewKeyDown="DataGrid_PreviewKeyDown" HorizontalScrollBarVisibility="Auto" CanUserResizeColumns="True">
+                    <DataGrid x:Name="TablesGrid" Grid.Row="2" ItemsSource="{Binding TableRows}" SelectedItem="{Binding SelectedTable, Mode=TwoWay}" SelectionMode="Single" SelectionUnit="FullRow" MouseDoubleClick="TablesGrid_MouseDoubleClick" PreviewMouseDoubleClick="DataGrid_PreviewMouseDoubleClick" PreviewMouseRightButtonDown="DataGrid_PreviewMouseRightButtonDown" PreviewKeyDown="DataGrid_PreviewKeyDown" HorizontalScrollBarVisibility="Auto" CanUserResizeColumns="True" FrozenColumnCount="3">
                         <DataGrid.ContextMenu><ContextMenu><MenuItem Header="复制单元格" Click="CopyCellMenuItem_Click" /></ContextMenu></DataGrid.ContextMenu>
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Width="78" CellTemplate="{StaticResource StatusBadgeTemplate}">
+                            <DataGridTemplateColumn Width="112" CellTemplate="{StaticResource StatusBadgeTemplate}">
                                 <DataGridTemplateColumn.Header>
                                     <StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="状态" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox x:Name="TableStatusFilterBox" Tag="StatusText" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="TableColumnFilter_TextChanged" /></StackPanel>
                                 </DataGridTemplateColumn.Header>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Binding="{Binding ChineseName}" Width="220" MinWidth="100" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
-                                <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="中文表名" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox x:Name="TableChineseNameFilterBox" Tag="ChineseName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="TableColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
+                            <DataGridTextColumn Binding="{Binding ChineseName}" Width="210" MinWidth="110" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
+                                <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="正式中文名" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox x:Name="TableChineseNameFilterBox" Tag="OfficialChineseName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="TableColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
                             </DataGridTextColumn>
                             <DataGridTextColumn Binding="{Binding ObjectName}" Width="260" MinWidth="120" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
                                 <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="英文表名" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox x:Name="TableObjectNameFilterBox" Tag="ObjectName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="TableColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Binding="{Binding SuggestedChineseName}" Width="210" MinWidth="110" ElementStyle="{StaticResource SuggestedDataGridTextStyle}">
+                                <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="参考译名" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="SuggestedChineseName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="TableColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Binding="{Binding ConflictText}" Width="82" ElementStyle="{StaticResource ConflictDataGridTextStyle}">
+                                <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="冲突" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="ConflictText" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="TableColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
                             </DataGridTextColumn>
                             <DataGridTextColumn Binding="{Binding ObjectTypeText}" Width="66" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
                                 <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="对象" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox x:Name="TableObjectTypeFilterBox" Tag="ObjectTypeText" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="TableColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
                             </DataGridTextColumn>
                             <DataGridTextColumn Binding="{Binding ModuleName}" Width="160" MinWidth="96" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
                                 <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="模块" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox x:Name="TableModuleFilterBox" Tag="ModuleName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="TableColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Binding="{Binding UsedByModulesText}" Width="190" MinWidth="110" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
+                                <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="被使用模块" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="UsedByModulesText" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="TableColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
                             </DataGridTextColumn>
                             <DataGridTextColumn Binding="{Binding EntityName}" Width="220" MinWidth="135" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
                                 <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="实体" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox x:Name="TableEntityFilterBox" Tag="EntityName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="TableColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
@@ -327,20 +361,37 @@
 
                     <TabControl Grid.Row="1">
                         <TabItem Header="字段字典">
-                            <DataGrid x:Name="FieldsGrid" ItemsSource="{Binding FieldRows}" SelectedItem="{Binding SelectedField, Mode=TwoWay}" SelectionMode="Single" SelectionUnit="FullRow" MouseDoubleClick="FieldsGrid_MouseDoubleClick" PreviewMouseDoubleClick="DataGrid_PreviewMouseDoubleClick" PreviewMouseRightButtonDown="DataGrid_PreviewMouseRightButtonDown" PreviewKeyDown="DataGrid_PreviewKeyDown" HorizontalScrollBarVisibility="Auto" CanUserResizeColumns="True">
+                            <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="44" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                            <Border Background="{DynamicResource App.PanelSecondaryBrush}" BorderBrush="{DynamicResource App.BorderBrush}" BorderThickness="0,0,0,1" Padding="12,0">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <CheckBox x:Name="ShowOnlyActualUsedFieldsCheckBox" Content="仅业务实际使用" IsChecked="{Binding ShowOnlyActualUsedFields, Mode=TwoWay}" ToolTip="勾选后只显示能够追溯到业务代码用途的字段" />
+                                    <TextBlock Text="正式名为空时保留参考译名，橙色内容需要人工复核" Foreground="{DynamicResource App.TextMutedBrush}" FontSize="12" VerticalAlignment="Center" Margin="16,0,0,0" />
+                                </StackPanel>
+                            </Border>
+                            <DataGrid x:Name="FieldsGrid" Grid.Row="1" ItemsSource="{Binding FieldRows}" SelectedItem="{Binding SelectedField, Mode=TwoWay}" SelectionMode="Single" SelectionUnit="FullRow" MouseDoubleClick="FieldsGrid_MouseDoubleClick" PreviewMouseDoubleClick="DataGrid_PreviewMouseDoubleClick" PreviewMouseRightButtonDown="DataGrid_PreviewMouseRightButtonDown" PreviewKeyDown="DataGrid_PreviewKeyDown" HorizontalScrollBarVisibility="Auto" CanUserResizeColumns="True" FrozenColumnCount="3">
                                 <DataGrid.ContextMenu><ContextMenu><MenuItem Header="复制单元格" Click="CopyCellMenuItem_Click" /></ContextMenu></DataGrid.ContextMenu>
                                 <DataGrid.Columns>
-                                    <DataGridTemplateColumn Width="78" CellTemplate="{StaticResource StatusBadgeTemplate}">
+                                    <DataGridTemplateColumn Width="112" CellTemplate="{StaticResource StatusBadgeTemplate}">
                                         <DataGridTemplateColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="状态" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="StatusText" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="FieldColumnFilter_TextChanged" /></StackPanel></DataGridTemplateColumn.Header>
                                     </DataGridTemplateColumn>
                                     <DataGridTextColumn Binding="{Binding FieldName}" Width="110" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
                                         <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="字段" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="FieldName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="FieldColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
                                     </DataGridTextColumn>
-                                    <DataGridTextColumn Binding="{Binding ChineseName}" Width="200" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
-                                        <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="字段名称" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="ChineseName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="FieldColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
+                                    <DataGridTextColumn Binding="{Binding ChineseName}" Width="190" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
+                                        <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="正式字段名" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="OfficialChineseName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="FieldColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn Binding="{Binding SuggestedChineseName}" Width="190" ElementStyle="{StaticResource SuggestedDataGridTextStyle}">
+                                        <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="参考译名" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="SuggestedChineseName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="FieldColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn Binding="{Binding ConflictText}" Width="76" ElementStyle="{StaticResource ConflictDataGridTextStyle}">
+                                        <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="冲突" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="ConflictText" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="FieldColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
                                     </DataGridTextColumn>
                                     <DataGridTextColumn Binding="{Binding OwnerTableName}" Width="140" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
                                         <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="表名" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="OwnerTableName" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="FieldColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn Binding="{Binding ActualUsageText}" Width="102" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
+                                        <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="业务使用" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="ActualUsageText" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="FieldColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
                                     </DataGridTextColumn>
                                     <DataGridTextColumn Binding="{Binding DataType}" Width="100" ElementStyle="{StaticResource CenteredDataGridTextStyle}">
                                         <DataGridTextColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="类型" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="DataType" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="FieldColumnFilter_TextChanged" /></StackPanel></DataGridTextColumn.Header>
@@ -362,6 +413,7 @@
                                     </DataGridTextColumn>
                                 </DataGrid.Columns>
                             </DataGrid>
+                            </Grid>
                         </TabItem>
 
                         <TabItem Header="关联关系">
@@ -373,7 +425,7 @@
                                 <DataGrid x:Name="RelationsGrid" Grid.Row="1" ItemsSource="{Binding RelationRows}" SelectedItem="{Binding SelectedRelation, Mode=TwoWay}" MouseDoubleClick="RelationsGrid_MouseDoubleClick" PreviewMouseDoubleClick="DataGrid_PreviewMouseDoubleClick" PreviewMouseRightButtonDown="DataGrid_PreviewMouseRightButtonDown" PreviewKeyDown="DataGrid_PreviewKeyDown" HorizontalScrollBarVisibility="Auto" CanUserResizeColumns="True">
                                     <DataGrid.ContextMenu><ContextMenu><MenuItem Header="复制单元格" Click="CopyCellMenuItem_Click" /></ContextMenu></DataGrid.ContextMenu>
                                     <DataGrid.Columns>
-                                        <DataGridTemplateColumn Width="90" CellTemplate="{StaticResource StatusBadgeTemplate}">
+                                        <DataGridTemplateColumn Width="112" CellTemplate="{StaticResource StatusBadgeTemplate}">
                                             <DataGridTemplateColumn.Header><StackPanel Style="{StaticResource ColumnHeaderStackStyle}"><TextBlock Text="状态" Style="{StaticResource ColumnHeaderLabelStyle}" /><TextBox Tag="StatusText" Style="{StaticResource ColumnFilterTextBoxStyle}" TextChanged="RelationColumnFilter_TextChanged" /></StackPanel></DataGridTemplateColumn.Header>
                                         </DataGridTemplateColumn>
                                         <DataGridTextColumn Binding="{Binding ParentTableName}" Width="163" ElementStyle="{StaticResource CenteredDataGridTextStyle}">

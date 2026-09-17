@@ -662,7 +662,7 @@ namespace SHB.EosDataDictionary.Tests
                     Assert.AreEqual(36d, themeButton.ActualHeight, 1d);
                     Assert.AreEqual(262d, catalogPosition.X, 2d);
                     Assert.AreEqual(630d, catalogPanel.ActualWidth, 3d);
-                    Assert.AreEqual(42d, fieldsPosition.Y, 1d);
+                    Assert.AreEqual(86d, fieldsPosition.Y, 1d);
                 }
                 finally
                 {
@@ -688,11 +688,11 @@ namespace SHB.EosDataDictionary.Tests
                     Assert.IsNotNull(fieldsGrid);
 
                     Assert.IsTrue(tablesGrid.Columns[0].Width.IsAbsolute);
-                    Assert.AreEqual(78d, tablesGrid.Columns[0].Width.Value, 0.1d);
+                    Assert.AreEqual(112d, tablesGrid.Columns[0].Width.Value, 0.1d);
                     Assert.IsTrue(tablesGrid.Columns[1].Width.IsAbsolute);
                     Assert.IsTrue(tablesGrid.Columns[2].Width.IsAbsolute);
                     Assert.IsTrue(tablesGrid.Columns[3].Width.IsAbsolute);
-                    Assert.AreEqual(66d, tablesGrid.Columns[3].Width.Value, 0.1d);
+                    Assert.AreEqual(210d, tablesGrid.Columns[3].Width.Value, 0.1d);
                     Assert.IsTrue(tablesGrid.Columns[4].Width.IsAbsolute);
                     Assert.IsTrue(tablesGrid.Columns[5].Width.IsAbsolute);
                     Assert.IsTrue(tablesGrid.CanUserResizeColumns);
@@ -935,6 +935,7 @@ namespace SHB.EosDataDictionary.Tests
                 try
                 {
                     Assert.AreEqual(1, CountTextBindings(window, "TableCountText"));
+                    Assert.AreEqual(1, CountTextOccurrences(window, "GitHub 阶段："));
                 }
                 finally
                 {
@@ -956,7 +957,12 @@ namespace SHB.EosDataDictionary.Tests
                 {
                     var showAllObjects = window.FindName("ShowAllObjectsCheckBox") as CheckBox;
                     var showEosEntities = window.FindName("ShowEosEntityObjectsOnlyCheckBox") as CheckBox;
+                    var showMissingOfficial = window.FindName("ShowOnlyMissingOfficialNamesCheckBox") as CheckBox;
+                    var showSuggestions = window.FindName("ShowOnlyWithSuggestionsCheckBox") as CheckBox;
+                    var showConflicts = window.FindName("ShowOnlyConflictsCheckBox") as CheckBox;
+                    var showActualFields = window.FindName("ShowOnlyActualUsedFieldsCheckBox") as CheckBox;
                     var evidenceGrid = window.FindName("EvidenceGrid") as DataGrid;
+                    var tablesGrid = window.FindName("TablesGrid") as DataGrid;
                     var fieldsGrid = window.FindName("FieldsGrid") as DataGrid;
 
                     Assert.IsNotNull(showAllObjects);
@@ -965,10 +971,24 @@ namespace SHB.EosDataDictionary.Tests
                     Binding entityBinding = BindingOperations.GetBinding(showEosEntities, ToggleButton.IsCheckedProperty);
                     Assert.IsNotNull(entityBinding);
                     Assert.AreEqual("ShowEosEntityObjectsOnly", entityBinding.Path.Path);
+                    Assert.IsNotNull(showMissingOfficial);
+                    Assert.IsNotNull(showSuggestions);
+                    Assert.IsNotNull(showConflicts);
+                    Assert.IsNotNull(showActualFields);
                     Assert.IsNotNull(evidenceGrid);
                     AssertHasCopyCellMenu(evidenceGrid);
+                    Assert.IsNotNull(tablesGrid);
+                    Assert.AreEqual(3, tablesGrid.FrozenColumnCount);
+                    Assert.AreEqual("正式中文名", GetColumnHeaderText(tablesGrid.Columns[1]));
+                    Assert.AreEqual("英文表名", GetColumnHeaderText(tablesGrid.Columns[2]));
+                    Assert.AreEqual("参考译名", GetColumnHeaderText(tablesGrid.Columns[3]));
+                    Assert.AreEqual("冲突", GetColumnHeaderText(tablesGrid.Columns[4]));
+                    Assert.AreEqual("被使用模块", GetColumnHeaderText(tablesGrid.Columns[7]));
                     Assert.IsNotNull(fieldsGrid);
-                    Assert.AreEqual("表名", GetColumnHeaderText(fieldsGrid.Columns[3]));
+                    Assert.AreEqual(3, fieldsGrid.FrozenColumnCount);
+                    Assert.AreEqual("正式字段名", GetColumnHeaderText(fieldsGrid.Columns[2]));
+                    Assert.AreEqual("参考译名", GetColumnHeaderText(fieldsGrid.Columns[3]));
+                    Assert.AreEqual("表名", GetColumnHeaderText(fieldsGrid.Columns[5]));
                 }
                 finally
                 {
@@ -1015,7 +1035,7 @@ namespace SHB.EosDataDictionary.Tests
 
                 Assert.IsNotNull(dataGridStyle);
                 Assert.AreEqual(new Thickness(0), GetSetterValue(dataGridStyle, DataGrid.BorderThicknessProperty));
-                Assert.AreEqual(13d, GetSetterValue(dataGridStyle, DataGrid.FontSizeProperty));
+                Assert.AreEqual(14d, GetSetterValue(dataGridStyle, DataGrid.FontSizeProperty));
                 Assert.AreEqual(46d, GetSetterValue(dataGridStyle, DataGrid.RowHeightProperty));
                 Assert.AreEqual(76d, GetSetterValue(dataGridStyle, DataGrid.ColumnHeaderHeightProperty));
                 Assert.AreEqual(true, GetSetterValue(dataGridStyle, DataGrid.CanUserResizeColumnsProperty));
@@ -1024,9 +1044,9 @@ namespace SHB.EosDataDictionary.Tests
                 Assert.AreEqual(HorizontalAlignment.Stretch, GetSetterValue(cellStyle, DataGridCell.HorizontalContentAlignmentProperty));
                 Assert.AreEqual(VerticalAlignment.Stretch, GetSetterValue(cellStyle, DataGridCell.VerticalContentAlignmentProperty));
                 Assert.AreEqual(new Thickness(5, 4, 5, 0), GetSetterValue(filterStyle, TextBox.MarginProperty));
-                Assert.AreEqual(12d, GetSetterValue(filterStyle, TextBox.FontSizeProperty));
+                Assert.AreEqual(13d, GetSetterValue(filterStyle, TextBox.FontSizeProperty));
                 Assert.AreEqual(30d, GetSetterValue(filterStyle, TextBox.HeightProperty));
-                Assert.AreEqual(FontWeights.Bold, GetSetterValue(titleStyle, TextBlock.FontWeightProperty));
+                Assert.AreEqual(FontWeights.SemiBold, GetSetterValue(titleStyle, TextBlock.FontWeightProperty));
                 var panel = new Border { Style = panelStyle };
                 var shell = new Border { Style = shellStyle };
                 Assert.IsInstanceOfType(panel.Effect, typeof(DropShadowEffect));
@@ -2566,7 +2586,7 @@ namespace SHB.EosDataDictionary.Tests
             return null;
         }
 
-        /// <summary>XMZADD 20260828 验证每个文本列共享同一套显式居中样式。</summary>
+        /// <summary>XMZADD 20260917 验证每个文本列直接或通过语义颜色样式继承统一的居中布局。</summary>
         private static void AssertTextColumnsUseStyle(DataGrid grid, Style centeredStyle)
         {
             for (int i = 0; i < grid.Columns.Count; i++)
@@ -2574,7 +2594,11 @@ namespace SHB.EosDataDictionary.Tests
                 var textColumn = grid.Columns[i] as DataGridTextColumn;
                 if (textColumn != null)
                 {
-                    Assert.AreSame(centeredStyle, textColumn.ElementStyle);
+                    Style actualStyle = textColumn.ElementStyle;
+                    Assert.IsTrue(
+                        object.ReferenceEquals(centeredStyle, actualStyle) ||
+                        (actualStyle != null && object.ReferenceEquals(centeredStyle, actualStyle.BasedOn)),
+                        "文本列必须保留统一居中布局，列索引：" + i);
                 }
             }
         }
@@ -3047,6 +3071,22 @@ DELETE FROM SnapshotContents WHERE ScopeKey = @ScopeKey;";
             for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
             {
                 count += CountTextBindings(VisualTreeHelper.GetChild(root, index), path);
+            }
+            return count;
+        }
+
+        /// <summary>XMZADD 20260917 递归统计界面中的固定文案，防止状态栏标签意外重复。</summary>
+        private static int CountTextOccurrences(DependencyObject root, string expected)
+        {
+            int count = 0;
+            var textBlock = root as TextBlock;
+            if (textBlock != null && string.Equals(textBlock.Text, expected, StringComparison.Ordinal))
+            {
+                count++;
+            }
+            for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+            {
+                count += CountTextOccurrences(VisualTreeHelper.GetChild(root, index), expected);
             }
             return count;
         }

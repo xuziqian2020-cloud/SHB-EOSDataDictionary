@@ -1309,12 +1309,8 @@ namespace SHB.EosDataDictionary
         private void ClearTableFilterInputs()
         {
             TableSearchBox.Clear();
-            TableStatusFilterBox.Clear();
-            TableChineseNameFilterBox.Clear();
-            TableObjectNameFilterBox.Clear();
-            TableObjectTypeFilterBox.Clear();
-            TableModuleFilterBox.Clear();
-            TableEntityFilterBox.Clear();
+            // 表列会随字典能力扩展，按列头统一清理可避免新增筛选残留并阻断关系跳转。
+            ClearColumnFilterTextBoxes(TablesGrid);
         }
 
         /// <summary>XMZADD 20260901 清空字段和关系表头筛选，使资源树定位后展示目标表的完整字段与关联信息。</summary>
