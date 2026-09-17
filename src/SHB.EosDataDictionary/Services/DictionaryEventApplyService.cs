@@ -437,6 +437,10 @@ namespace SHB.EosDataDictionary.Services
             {
                 return ApplySet(snapshot, operation, revision);
             }
+            if (operation.ChangeKind == "RejectSuggestion")
+            {
+                return ApplyRejectSuggestion(snapshot, operation, revision);
+            }
             if (operation.ChangeKind == "AddTable")
             {
                 return ApplyAddTable(snapshot, operation, revision);
@@ -462,6 +466,76 @@ namespace SHB.EosDataDictionary.Services
                 return ApplyRemoveRelation(snapshot, operation, revision);
             }
             throw new InvalidOperationException("事件类型不受支持。");
+        }
+
+        /// <summary>XMZADD 20260917 应用表或字段参考译名否决指纹，并仅清除证据版本完全匹配的当前候选。</summary>
+        private static AppliedDictionaryEvent ApplyRejectSuggestion(
+            SnapshotData snapshot,
+            DictionaryChangeOperation operation,
+            long revision)
+        {
+            TableMetadata table = FindTable(snapshot, operation.ObjectKey);
+            if (table == null)
+            {
+                throw new InvalidOperationException("参考译名否决目标表不存在。");
+            }
+            FieldMetadata field = string.IsNullOrEmpty(operation.FieldKey) ? null : FindField(table, operation.FieldKey);
+            if (!string.IsNullOrEmpty(operation.FieldKey) && field == null)
+            {
+                throw new InvalidOperationException("参考译名否决目标字段不存在。");
+            }
+
+            MetadataValue suggestion;
+            IList<string> rejectedFingerprints;
+            if (field == null)
+            {
+                suggestion = table.SuggestedChineseName;
+                if (table.RejectedSuggestionFingerprints == null)
+                {
+                    table.RejectedSuggestionFingerprints = new List<string>();
+                }
+                rejectedFingerprints = table.RejectedSuggestionFingerprints;
+            }
+            else
+            {
+                suggestion = field.SuggestedChineseName;
+                if (field.RejectedSuggestionFingerprints == null)
+                {
+                    field.RejectedSuggestionFingerprints = new List<string>();
+                }
+                rejectedFingerprints = field.RejectedSuggestionFingerprints;
+            }
+
+            AddRejectedSuggestionFingerprint(rejectedFingerprints, operation.NewValue);
+            if (suggestion != null && string.Equals(
+                new NameSuggestionFingerprintService().CreateFingerprint(suggestion),
+                operation.NewValue,
+                StringComparison.Ordinal))
+            {
+                // 指纹绑定候选文本及证据版本，新证据产生的新版本不能被旧否决误伤。
+                if (field == null)
+                {
+                    table.SuggestedChineseName = null;
+                }
+                else
+                {
+                    field.SuggestedChineseName = null;
+                }
+            }
+            return CreateHistory(operation, revision, GetMetadataText(suggestion), operation.NewValue);
+        }
+
+        /// <summary>XMZADD 20260917 追加唯一否决指纹，使不同事件号表达相同决定时仍保持集合幂等。</summary>
+        private static void AddRejectedSuggestionFingerprint(IList<string> fingerprints, string fingerprint)
+        {
+            for (int index = 0; index < fingerprints.Count; index++)
+            {
+                if (string.Equals(fingerprints[index], fingerprint, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+            fingerprints.Add(fingerprint);
         }
 
         /// <summary>XMZADD 20260901 应用表或字段的显式白名单标量并记录服务端读取到的真实旧值。</summary>

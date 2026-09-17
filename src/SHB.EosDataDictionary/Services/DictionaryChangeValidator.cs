@@ -219,6 +219,11 @@ namespace SHB.EosDataDictionary.Services
                 ValidateSetOperation(operation, operationIndex, isPublisher, errors);
                 return;
             }
+            if (string.Equals(kind, "RejectSuggestion", StringComparison.Ordinal))
+            {
+                ValidateRejectSuggestionOperation(operation, operationIndex, errors);
+                return;
+            }
             if (string.Equals(kind, "AddTable", StringComparison.Ordinal) ||
                 string.Equals(kind, "RemoveTable", StringComparison.Ordinal) ||
                 string.Equals(kind, "AddField", StringComparison.Ordinal) ||
@@ -235,6 +240,41 @@ namespace SHB.EosDataDictionary.Services
             }
 
             AddError(errors, "CHANGE_KIND_INVALID", operationIndex, "事件类型不在固定白名单中。");
+        }
+
+        /// <summary>XMZADD 20260917 校验参考译名否决事件只携带固定属性和小写 SHA-256 指纹。</summary>
+        private static void ValidateRejectSuggestionOperation(
+            DictionaryChangeOperation operation,
+            int operationIndex,
+            IList<DictionaryChangeValidationError> errors)
+        {
+            bool invalid = !string.Equals(operation.PropertyName, "SuggestedChineseName", StringComparison.Ordinal) ||
+                           !IsCanonicalSuggestionFingerprint(operation.NewValue) ||
+                           operation.TablePayload != null || operation.FieldPayload != null ||
+                           operation.RelationPayload != null;
+            if (invalid)
+            {
+                AddError(errors, "REJECT_SUGGESTION_INVALID", operationIndex,
+                    "参考译名否决事件必须使用固定属性和 64 位小写 SHA-256 指纹。");
+            }
+        }
+
+        /// <summary>XMZADD 20260917 判断否决指纹是否为客户端和发布工作流共同采用的规范小写格式。</summary>
+        internal static bool IsCanonicalSuggestionFingerprint(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length != 64)
+            {
+                return false;
+            }
+            for (int index = 0; index < value.Length; index++)
+            {
+                char current = value[index];
+                if (!((current >= '0' && current <= '9') || (current >= 'a' && current <= 'f')))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /// <summary>XMZADD 20260901 仅允许结构发布者提交固定公开字段组成的相对路径短证据。</summary>

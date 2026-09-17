@@ -4,7 +4,7 @@ using System.Runtime.Serialization;
 
 namespace SHB.EosDataDictionary.Models
 {
-    /// <summary>XMZADD 20260901 保存一次可独立追踪和重放的共享字典属性修改。</summary>
+    /// <summary>XMZADD 20260917 保存一次可独立追踪和重放的属性赋值、参考译名否决或结构修改。</summary>
     public sealed class DictionaryChangeOperation : IExtensibleDataObject
     {
         public string OperationId { get; set; }

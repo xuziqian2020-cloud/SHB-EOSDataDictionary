@@ -492,6 +492,47 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsTrue(emptyResult.IsValid, JoinErrors(emptyResult));
         }
 
+        /// <summary>XMZADD 20260917 验证普通维护人员可提交表级和字段级参考译名否决指纹并由可信身份重新署名。</summary>
+        [TestMethod]
+        public void ValidateAndNormalize_RejectSuggestion_AllowsCanonicalTableAndFieldFingerprints()
+        {
+            string fingerprint = new string('a', 64);
+            var batch = CreateBatch();
+            batch.Operations.Add(CreateRejectSuggestion("reject_table", string.Empty, fingerprint));
+            batch.Operations.Add(CreateRejectSuggestion("reject_field", "FNAME", fingerprint));
+
+            DictionaryChangeValidationResult result = new DictionaryChangeValidator().ValidateAndNormalize(
+                batch, "12345", new List<string>());
+
+            Assert.IsTrue(result.IsValid, JoinErrors(result));
+            Assert.AreEqual(2, result.NormalizedBatch.Operations.Count);
+            Assert.AreEqual("12345", result.NormalizedBatch.Operations[0].AuthorGitHubUserId);
+            Assert.AreEqual("RejectSuggestion", result.NormalizedBatch.Operations[0].ChangeKind);
+            Assert.AreEqual("SuggestedChineseName", result.NormalizedBatch.Operations[1].PropertyName);
+        }
+
+        /// <summary>XMZADD 20260917 验证参考译名否决事件拒绝错误长度、非小写十六进制、错误属性及结构载荷。</summary>
+        [TestMethod]
+        public void ValidateAndNormalize_RejectSuggestion_InvalidContractReportsEveryOperation()
+        {
+            var batch = CreateBatch();
+            batch.Operations.Add(CreateRejectSuggestion("reject_short", string.Empty, new string('a', 63)));
+            batch.Operations.Add(CreateRejectSuggestion("reject_upper", string.Empty, new string('A', 64)));
+            batch.Operations.Add(CreateRejectSuggestion("reject_non_hex", string.Empty, new string('g', 64)));
+            DictionaryChangeOperation wrongProperty = CreateRejectSuggestion("reject_property", string.Empty, new string('b', 64));
+            wrongProperty.PropertyName = "ChineseName";
+            batch.Operations.Add(wrongProperty);
+            DictionaryChangeOperation payload = CreateRejectSuggestion("reject_payload", string.Empty, new string('c', 64));
+            payload.TablePayload = new TableStructurePayload();
+            batch.Operations.Add(payload);
+
+            DictionaryChangeValidationResult result = new DictionaryChangeValidator().ValidateAndNormalize(
+                batch, "12345", new List<string>());
+
+            Assert.IsFalse(result.IsValid);
+            Assert.AreEqual(5, CountErrors(result, "REJECT_SUGGESTION_INVALID"));
+        }
+
         private static DictionaryChangeBatch CreateBatchWithOneValidOperation()
         {
             DictionaryChangeBatch batch = CreateBatch();
@@ -521,6 +562,23 @@ namespace SHB.EosDataDictionary.Tests
                 OldValue = "旧值",
                 NewValue = newValue,
                 ChangeKind = "Set",
+                CreatedAtUtc = DateTime.UtcNow
+            };
+        }
+
+        /// <summary>XMZADD 20260917 构造参考译名否决事件以复用表级和字段级协议测试。</summary>
+        private static DictionaryChangeOperation CreateRejectSuggestion(string id, string fieldKey, string fingerprint)
+        {
+            return new DictionaryChangeOperation
+            {
+                OperationId = id,
+                AuthorGitHubUserId = "forged-publisher",
+                ObjectKey = "dbo.T_ORDER",
+                FieldKey = fieldKey,
+                PropertyName = "SuggestedChineseName",
+                OldValue = "客户端参考译名",
+                NewValue = fingerprint,
+                ChangeKind = "RejectSuggestion",
                 CreatedAtUtc = DateTime.UtcNow
             };
         }

@@ -38,6 +38,14 @@ def make_operation(operation_id, value, property_name="ChineseName", field_key="
     }
 
 
+def make_reject_suggestion_operation(operation_id, fingerprint, field_key="", object_key="dbo.T_ORDER"):
+    """XMZADD 20260917 构造与桌面端一致的参考译名否决事件。"""
+    operation = make_operation(operation_id, fingerprint, "SuggestedChineseName", field_key)
+    operation["ObjectKey"] = object_key
+    operation["ChangeKind"] = "RejectSuggestion"
+    return operation
+
+
 def make_batch(operation, author_id="999999", extra=None):
     """XMZADD 20260901 构造客户端批次并允许测试未知成员不能越过白名单。"""
     batch = {
@@ -237,6 +245,92 @@ class ProcessOpenIssuesTests(unittest.TestCase):
         event = json.loads((self.repo_dir / result.event_paths[0]).read_text(encoding="utf-8"))
         self.assertEqual("原名称", event["OldValue"])
         self.assertEqual("订单", event["NewValue"])
+
+    def test_reject_table_suggestion_is_idempotent_and_records_actual_value(self):
+        """XMZADD 20260917 验证表级参考译名否决按指纹清除且不同操作号重复重放不重复累加。"""
+        snapshot = initial_snapshot()
+        snapshot["Tables"][0]["SuggestedChineseName"] = empty_metadata("订单参考名")
+        snapshot["Tables"][0]["AlternativeChineseNames"] = []
+        snapshot["Tables"][0]["RejectedSuggestionFingerprints"] = []
+        snapshot["Tables"][0]["UsedByModules"] = []
+        write_snapshot(self.repo_dir, snapshot)
+        fingerprint = hashlib.sha256("订单参考名".encode("utf-8")).hexdigest()
+        first = make_reject_suggestion_operation("reject_table_1", fingerprint)
+        second = make_reject_suggestion_operation("reject_table_2", fingerprint)
+        batch = make_batch(first)
+        batch["Operations"].append(second)
+
+        result = PROCESSOR.process_issues(
+            self.repo_dir, [make_issue(52, 101, first, batch=batch)], publishers=[])
+
+        table = result.snapshot["Tables"][0]
+        self.assertIsNone(table["SuggestedChineseName"])
+        self.assertEqual([fingerprint], table["RejectedSuggestionFingerprints"])
+        events = [json.loads((self.repo_dir / path).read_text(encoding="utf-8"))
+                  for path in result.event_paths]
+        self.assertEqual("订单参考名", events[0]["OldValue"])
+        self.assertEqual(fingerprint, events[0]["NewValue"])
+
+    def test_reject_field_suggestion_clears_only_matching_version(self):
+        """XMZADD 20260917 验证字段级否决先保留不匹配版本，再清除完全匹配的建议。"""
+        snapshot = initial_snapshot()
+        field = physical_field()
+        field["SuggestedChineseName"] = empty_metadata("字段参考名")
+        field["AlternativeChineseNames"] = []
+        field["RejectedSuggestionFingerprints"] = []
+        snapshot["Tables"][0]["Fields"] = [field]
+        write_snapshot(self.repo_dir, snapshot)
+        matching = hashlib.sha256("字段参考名".encode("utf-8")).hexdigest()
+        different = "d" * 64
+        first = make_reject_suggestion_operation("reject_field_other", different, "FNAME")
+        second = make_reject_suggestion_operation("reject_field_match", matching, "FNAME")
+        batch = make_batch(first)
+        batch["Operations"].append(second)
+
+        result = PROCESSOR.process_issues(
+            self.repo_dir, [make_issue(53, 101, first, batch=batch)], publishers=[])
+
+        applied = result.snapshot["Tables"][0]["Fields"][0]
+        self.assertIsNone(applied["SuggestedChineseName"])
+        self.assertEqual([different, matching], applied["RejectedSuggestionFingerprints"])
+
+    def test_suggestion_fingerprint_matches_cross_language_fixture(self):
+        """XMZADD 20260917 验证 Python 与 C# 对候选规范化、证据排序及路径分隔符产生同一指纹。"""
+        candidate = empty_metadata("caption = 仓储区定义")
+        candidate["Evidence"] = [
+            {"SourceType": "知识库", "RuleName": "FieldDictionary",
+             "SourcePath": "docs_knowledge/02.md", "SourceLine": 18},
+            {"SourceType": "EOS业务源码", "RuleName": "GridColumnCaption",
+             "SourcePath": "ERP\\Warehouse\\Storage.vb", "SourceLine": 26},
+        ]
+
+        fingerprint = PROCESSOR._suggestion_fingerprint(candidate)
+
+        self.assertEqual(
+            "60b710f9b51398f8499a4f5b9fe9179602bffaa852b94b80da5ab852678dbd52",
+            fingerprint,
+        )
+
+    def test_reject_suggestion_invalid_fingerprints_and_targets_are_rejected(self):
+        """XMZADD 20260917 验证否决协议拒绝错误指纹、错误属性以及缺失表字段。"""
+        snapshot_before = (self.repo_dir / "snapshot" / "latest.json.gz").read_bytes()
+        invalid_operations = [
+            make_reject_suggestion_operation("reject_short", "a" * 63),
+            make_reject_suggestion_operation("reject_upper", "A" * 64),
+            make_reject_suggestion_operation("reject_non_hex", "g" * 64),
+            make_reject_suggestion_operation("reject_missing_table", "b" * 64,
+                                             object_key="dbo.T_MISSING"),
+            make_reject_suggestion_operation("reject_missing_field", "c" * 64, "FMISSING"),
+        ]
+        invalid_operations[2]["PropertyName"] = "ChineseName"
+        issues = [make_issue(60 + index, 101, operation)
+                  for index, operation in enumerate(invalid_operations)]
+
+        result = PROCESSOR.process_issues(self.repo_dir, issues, publishers=[])
+
+        self.assertEqual([], result.closed_issue_numbers)
+        self.assertEqual({60, 61, 62, 63, 64}, set(result.failed_issues))
+        self.assertEqual(snapshot_before, (self.repo_dir / "snapshot" / "latest.json.gz").read_bytes())
 
     def test_success_result_preserves_trusted_version_for_safe_close(self):
         """XMZADD 20260901 验证发布结果保留抓取时更新时间和正文摘要，供推送后关闭前防止覆盖用户新编辑。"""

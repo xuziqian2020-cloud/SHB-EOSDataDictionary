@@ -28,6 +28,7 @@ MAXIMUM_EVIDENCE_SUMMARY_LENGTH = 240
 BODY_PATTERN = re.compile(r"```json-v1\r?\n(.*?)\r?\n```", re.DOTALL)
 SAFE_OPERATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 SAFE_IDENTIFIER_PATTERN = re.compile(r"^[^\W]+(?:[^\W]|[@$#])*$", re.UNICODE)
+SUGGESTION_FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SENSITIVE_ASSIGNMENT_PATTERN = re.compile(
     r"(?:password|pwd|token|access[-_\s]*token|client[-_\s]*secret|secret|api[-_\s]*key|authorization|"
     r"server|database|connection[-_\s]*string|data[-_\s]*source|initial[-_\s]*catalog|user[-_\s]*id|uid)\s*[:=]",
@@ -402,6 +403,19 @@ def _normalize_set_operation(operation, is_publisher):
     return normalized
 
 
+def _normalize_reject_suggestion_operation(operation):
+    """XMZADD 20260917 校验参考译名否决事件只携带固定属性和规范小写 SHA-256。"""
+    if operation.get("PropertyName") != "SuggestedChineseName":
+        raise IssueValidationError("参考译名否决事件属性无效。")
+    fingerprint = operation.get("NewValue")
+    if not isinstance(fingerprint, str) or SUGGESTION_FINGERPRINT_PATTERN.fullmatch(fingerprint) is None:
+        raise IssueValidationError("参考译名否决指纹必须是 64 位小写 SHA-256。")
+    if any(operation.get(name) is not None
+           for name in ("TablePayload", "FieldPayload", "RelationPayload")):
+        raise IssueValidationError("参考译名否决事件不能携带结构载荷。")
+    return copy.deepcopy(operation)
+
+
 def _normalize_structure_operation(operation, is_publisher):
     """XMZADD 20260901 校验结构增删事件只携带对应载荷并要求发布者不可变 ID 授权。"""
     if not is_publisher:
@@ -459,6 +473,8 @@ def _normalize_operation(operation, trusted_author, is_publisher):
     kind = operation.get("ChangeKind")
     if kind == "Set":
         normalized = _normalize_set_operation(operation, is_publisher)
+    elif kind == "RejectSuggestion":
+        normalized = _normalize_reject_suggestion_operation(operation)
     elif kind in STRUCTURE_KINDS:
         normalized = _normalize_structure_operation(operation, is_publisher)
     else:
@@ -845,6 +861,78 @@ def _apply_set(snapshot, operation):
     return old_value, value
 
 
+def _normalize_name_candidate(value):
+    """XMZADD 20260917 镜像桌面端名称候选规范化规则以稳定核对跨语言指纹。"""
+    raw = value if isinstance(value, str) else ""
+    normalized = raw.strip()
+    first_equals = raw.find("=")
+    if first_equals >= 0:
+        for part in raw[first_equals + 1:].split("="):
+            if part.strip():
+                normalized = part.strip()
+                break
+    return normalized
+
+
+def _sanitize_fingerprint_source_path(value):
+    """XMZADD 20260917 将绝对或越界来源压缩为文件名并统一路径分隔符。"""
+    source_path = value.strip() if isinstance(value, str) else ""
+    normalized_path = source_path.replace("\\", "/")
+    is_rooted = (normalized_path.startswith("/") or
+                 re.match(r"^[A-Za-z]:/", normalized_path) is not None)
+    if is_rooted or ".." in source_path:
+        source_path = normalized_path.rsplit("/", 1)[-1]
+    return source_path.replace("\\", "/").upper()
+
+
+def _suggestion_fingerprint(candidate):
+    """XMZADD 20260917 按桌面端相同的候选值和排序证据算法生成 SHA-256。"""
+    if not isinstance(candidate, dict):
+        return ""
+    normalized_value = _normalize_name_candidate(candidate.get("Value")).upper()
+    descriptors = set()
+    evidence_items = candidate.get("Evidence")
+    if isinstance(evidence_items, list):
+        for evidence in evidence_items:
+            if not isinstance(evidence, dict):
+                continue
+            descriptor = "|".join((
+                str(evidence.get("SourceType") or "").strip().upper(),
+                str(evidence.get("RuleName") or "").strip().upper(),
+                _sanitize_fingerprint_source_path(evidence.get("SourcePath")),
+                str(evidence.get("SourceLine") or 0),
+            ))
+            descriptors.add(descriptor)
+    canonical = normalized_value
+    for descriptor in sorted(descriptors):
+        canonical += "\n" + descriptor
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _apply_reject_suggestion(snapshot, operation):
+    """XMZADD 20260917 记录唯一否决指纹并只清除证据版本完全匹配的参考译名。"""
+    table = _find_table(snapshot, operation["ObjectKey"])
+    if table is None:
+        raise IssueValidationError("参考译名否决目标表不存在。")
+    field_key = operation.get("FieldKey") or ""
+    target = _find_field(table, field_key) if field_key else table
+    if target is None:
+        raise IssueValidationError("参考译名否决目标字段不存在。")
+    suggestion = target.get("SuggestedChineseName")
+    old_value = _metadata_text(suggestion)
+    rejected = target.get("RejectedSuggestionFingerprints")
+    if not isinstance(rejected, list):
+        rejected = []
+        target["RejectedSuggestionFingerprints"] = rejected
+    fingerprint = operation["NewValue"]
+    if not any(isinstance(value, str) and value.casefold() == fingerprint.casefold()
+               for value in rejected):
+        rejected.append(fingerprint)
+    if suggestion is not None and _suggestion_fingerprint(suggestion) == fingerprint:
+        target["SuggestedChineseName"] = None
+    return old_value, fingerprint
+
+
 def _apply_structure(snapshot, operation):
     """XMZADD 20260901 事务性应用结构增删并返回服务端真实结构前后载荷。"""
     kind = operation["ChangeKind"]
@@ -969,6 +1057,8 @@ def _create_event(snapshot, operation, issue_time_text):
     }
     if operation["ChangeKind"] == "Set":
         event["OldValue"], event["NewValue"] = _apply_set(snapshot, operation)
+    elif operation["ChangeKind"] == "RejectSuggestion":
+        event["OldValue"], event["NewValue"] = _apply_reject_suggestion(snapshot, operation)
     else:
         event.update(_apply_structure(snapshot, operation))
     return event

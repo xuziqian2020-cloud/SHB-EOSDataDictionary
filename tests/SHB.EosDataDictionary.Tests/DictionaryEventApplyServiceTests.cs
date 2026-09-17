@@ -577,6 +577,103 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual("旧名称", service.AppliedHistory[0].OldValue);
         }
 
+        /// <summary>XMZADD 20260917 验证表级参考译名否决只清除匹配版本并对不同操作号的重复决定保持集合幂等。</summary>
+        [TestMethod]
+        public void Apply_RejectTableSuggestion_ClearsMatchingCandidateAndKeepsFingerprintUnique()
+        {
+            SnapshotData snapshot = CreateSnapshot("旧名称");
+            MetadataValue suggestion = ManualValue("订单参考名");
+            snapshot.Tables[0].SuggestedChineseName = suggestion;
+            string fingerprint = new NameSuggestionFingerprintService().CreateFingerprint(suggestion);
+            var service = new DictionaryEventApplyService();
+
+            DictionaryEventApplyResult first = service.Apply(snapshot,
+                CreateRejectSuggestion("reject_table_1", "dbo.T_ORDER", string.Empty, fingerprint),
+                1L, "111", EmptyPublishers());
+            DictionaryEventApplyResult second = service.Apply(snapshot,
+                CreateRejectSuggestion("reject_table_2", "dbo.T_ORDER", string.Empty, fingerprint),
+                2L, "111", EmptyPublishers());
+
+            Assert.AreEqual(DictionaryEventApplyStatus.Applied, first.Status);
+            Assert.AreEqual(DictionaryEventApplyStatus.Applied, second.Status);
+            Assert.IsNull(snapshot.Tables[0].SuggestedChineseName);
+            Assert.AreEqual(1, snapshot.Tables[0].RejectedSuggestionFingerprints.Count);
+            Assert.AreEqual(fingerprint, snapshot.Tables[0].RejectedSuggestionFingerprints[0]);
+            Assert.AreEqual("订单参考名", service.AppliedHistory[0].OldValue);
+            Assert.AreEqual(fingerprint, service.AppliedHistory[0].NewValue);
+        }
+
+        /// <summary>XMZADD 20260917 验证字段级否决保留不匹配的新证据版本，并在匹配时清除当前参考译名。</summary>
+        [TestMethod]
+        public void Apply_RejectFieldSuggestion_OnlyClearsMatchingEvidenceVersion()
+        {
+            SnapshotData snapshot = CreateSnapshot("旧名称");
+            MetadataValue suggestion = ManualValue("名称字段参考名");
+            snapshot.Tables[0].Fields[1].SuggestedChineseName = suggestion;
+            string matching = new NameSuggestionFingerprintService().CreateFingerprint(suggestion);
+            string different = new string('d', 64);
+            var service = new DictionaryEventApplyService();
+
+            service.Apply(snapshot,
+                CreateRejectSuggestion("reject_field_other", "dbo.T_ORDER", "FNAME", different),
+                1L, "111", EmptyPublishers());
+            Assert.IsNotNull(snapshot.Tables[0].Fields[1].SuggestedChineseName);
+
+            service.Apply(snapshot,
+                CreateRejectSuggestion("reject_field_match", "dbo.T_ORDER", "FNAME", matching),
+                2L, "111", EmptyPublishers());
+
+            Assert.IsNull(snapshot.Tables[0].Fields[1].SuggestedChineseName);
+            Assert.AreEqual(2, snapshot.Tables[0].Fields[1].RejectedSuggestionFingerprints.Count);
+        }
+
+        /// <summary>XMZADD 20260917 验证 C# 与 Python 共享的候选文本、证据排序和路径规范化指纹样例。</summary>
+        [TestMethod]
+        public void Apply_RejectSuggestion_UsesCrossLanguageFingerprintFixture()
+        {
+            const string fingerprint = "60b710f9b51398f8499a4f5b9fe9179602bffaa852b94b80da5ab852678dbd52";
+            SnapshotData snapshot = CreateSnapshot("旧名称");
+            var suggestion = new MetadataValue
+            {
+                Value = "caption = 仓储区定义",
+                Evidence = new List<EvidenceItem>
+                {
+                    new EvidenceItem { SourceType = "知识库", RuleName = "FieldDictionary", SourcePath = "docs_knowledge/02.md", SourceLine = 18 },
+                    new EvidenceItem { SourceType = "EOS业务源码", RuleName = "GridColumnCaption", SourcePath = "ERP\\Warehouse\\Storage.vb", SourceLine = 26 }
+                }
+            };
+            snapshot.Tables[0].SuggestedChineseName = suggestion;
+
+            new DictionaryEventApplyService().Apply(snapshot,
+                CreateRejectSuggestion("reject_cross_language", "dbo.T_ORDER", string.Empty, fingerprint),
+                1L, "111", EmptyPublishers());
+
+            Assert.AreEqual(fingerprint, new NameSuggestionFingerprintService().CreateFingerprint(suggestion));
+            Assert.IsNull(snapshot.Tables[0].SuggestedChineseName);
+        }
+
+        /// <summary>XMZADD 20260917 验证否决事件目标表或字段不存在时整项失败且不留下指纹副作用。</summary>
+        [TestMethod]
+        public void Apply_RejectSuggestion_MissingTableOrFieldIsRejectedWithoutMutation()
+        {
+            SnapshotData snapshot = CreateSnapshot("旧名称");
+            MetadataValue suggestion = ManualValue("订单参考名");
+            snapshot.Tables[0].SuggestedChineseName = suggestion;
+            string fingerprint = new NameSuggestionFingerprintService().CreateFingerprint(suggestion);
+            var service = new DictionaryEventApplyService();
+
+            Assert.ThrowsException<InvalidOperationException>(() => service.Apply(snapshot,
+                CreateRejectSuggestion("reject_missing_table", "dbo.T_MISSING", string.Empty, fingerprint),
+                1L, "111", EmptyPublishers()));
+            Assert.ThrowsException<InvalidOperationException>(() => service.Apply(snapshot,
+                CreateRejectSuggestion("reject_missing_field", "dbo.T_ORDER", "FMISSING", fingerprint),
+                1L, "111", EmptyPublishers()));
+
+            Assert.IsNotNull(snapshot.Tables[0].SuggestedChineseName);
+            Assert.AreEqual(0, snapshot.Tables[0].RejectedSuggestionFingerprints.Count);
+            Assert.AreEqual(0, service.AppliedHistory.Count);
+        }
+
         private static SnapshotData CreateSnapshot(string fieldChineseName)
         {
             var snapshot = new SnapshotData { FormatVersion = 1, Revision = 0L };
@@ -640,6 +737,27 @@ namespace SHB.EosDataDictionary.Tests
                 OldValue = oldValue,
                 NewValue = newValue,
                 ChangeKind = "Set",
+                CreatedAtUtc = DateTime.UtcNow
+            };
+        }
+
+        /// <summary>XMZADD 20260917 构造参考译名否决事件以验证服务端目标定位和指纹幂等。</summary>
+        private static DictionaryChangeOperation CreateRejectSuggestion(
+            string id,
+            string objectKey,
+            string fieldKey,
+            string fingerprint)
+        {
+            return new DictionaryChangeOperation
+            {
+                OperationId = id,
+                AuthorGitHubUserId = "forged",
+                ObjectKey = objectKey,
+                FieldKey = fieldKey,
+                PropertyName = "SuggestedChineseName",
+                OldValue = "客户端伪造参考名",
+                NewValue = fingerprint,
+                ChangeKind = "RejectSuggestion",
                 CreatedAtUtc = DateTime.UtcNow
             };
         }
