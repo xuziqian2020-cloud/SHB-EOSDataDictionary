@@ -147,8 +147,8 @@ namespace SHB.EosDataDictionary.Promoter
             return revision;
         }
 
-        /// <summary>XMZADD 20260909 拒绝覆盖既有输出或把源库、输出库和仓库目录混用。</summary>
-        private static void ValidatePaths(string sourceDatabasePath, string outputDatabasePath, string repositoryRoot)
+        /// <summary>XMZADD 20260917 拒绝覆盖既有输出，并兼容普通仓库与 linked worktree 的元数据入口。</summary>
+        internal static void ValidatePaths(string sourceDatabasePath, string outputDatabasePath, string repositoryRoot)
         {
             if (!File.Exists(sourceDatabasePath))
             {
@@ -162,7 +162,9 @@ namespace SHB.EosDataDictionary.Promoter
             {
                 throw new ArgumentException("源数据库与输出数据库不能相同。");
             }
-            if (!Directory.Exists(Path.Combine(repositoryRoot, ".git")) ||
+            string gitMetadataPath = Path.Combine(repositoryRoot, ".git");
+            // linked worktree 使用 .git 文件指向公共元数据目录，发布校验必须认可 Git 的两种合法工作树形态。
+            if ((!Directory.Exists(gitMetadataPath) && !File.Exists(gitMetadataPath)) ||
                 !File.Exists(Path.Combine(repositoryRoot, "snapshot", "manifest.json")))
             {
                 throw new DirectoryNotFoundException("仓库目录缺少 .git 或 snapshot/manifest.json。");

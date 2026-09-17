@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SHB.EosDataDictionary\SHB.EosDataDictionary.csproj" />
+    <ProjectReference Include="..\..\tools\SHB.EosDataDictionary.Promoter\SHB.EosDataDictionary.Promoter.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="MSTest.TestAdapter" Version="3.6.3" />
     <PackageReference Include="MSTest.TestFramework" Version="3.6.3" />
