@@ -74,6 +74,13 @@ namespace SHB.EosDataDictionary.Services
         public void Write(string reportRoot, SnapshotData snapshot, BusinessDictionaryV1Report report,
             IList<SourceEvidence> sourceEvidence)
         {
+            Write(reportRoot, snapshot, report, sourceEvidence, null);
+        }
+
+        /// <summary>XMZADD 20260916 写出原有业务报告及 V6 发布门禁所需的十份稳定审计文件。</summary>
+        public void Write(string reportRoot, SnapshotData snapshot, BusinessDictionaryV1Report report,
+            IList<SourceEvidence> sourceEvidence, DictionaryV6QualityResult qualityResult)
+        {
             if (string.IsNullOrWhiteSpace(reportRoot))
             {
                 throw new ArgumentException("报告目录不能为空。", "reportRoot");
@@ -97,6 +104,10 @@ namespace SHB.EosDataDictionary.Services
                 CreateActualFieldReviewCsv(reviewRecords), new UTF8Encoding(true));
             File.WriteAllText(Path.Combine(reportRoot, "未知缩写频率.csv"),
                 CreateUnknownAbbreviationFrequencyCsv(reviewRecords), new UTF8Encoding(true));
+            if (qualityResult != null)
+            {
+                WriteV6QualityReports(reportRoot, snapshot, qualityResult);
+            }
         }
 
         /// <summary>XMZADD 20260903 统计表级实体、知识库来源及业务分类。</summary>
@@ -915,6 +926,438 @@ namespace SHB.EosDataDictionary.Services
                 evidence == null ? string.Empty : evidence.SourceLine.ToString(CultureInfo.InvariantCulture));
         }
 
+        /// <summary>XMZADD 20260916 写出机器门禁摘要与九份可供 Excel 复核的 V6 明细报告。</summary>
+        private static void WriteV6QualityReports(string reportRoot, SnapshotData snapshot,
+            DictionaryV6QualityResult quality)
+        {
+            File.WriteAllText(Path.Combine(reportRoot, "summary.json"),
+                CreateV6SummaryJson(quality), new UTF8Encoding(false));
+            WriteV6Csv(reportRoot, "official-name-coverage.csv",
+                CreateNameCoverageCsv(snapshot, false));
+            WriteV6Csv(reportRoot, "suggested-name-coverage.csv",
+                CreateNameCoverageCsv(snapshot, true));
+            WriteV6Csv(reportRoot, "used-field-gaps.csv",
+                CreateQualityIssueCsv(quality.UsedFieldGaps));
+            WriteV6Csv(reportRoot, "conflicts.csv",
+                CreateQualityIssueCsv(quality.OfficialConflicts));
+            WriteV6Csv(reportRoot, "pseudo-chinese.csv",
+                CreateQualityIssueCsv(quality.PseudoChineseOfficials));
+            WriteV6Csv(reportRoot, "module-attribution.csv",
+                CreateModuleAttributionCsv(snapshot));
+            WriteV6Csv(reportRoot, "relation-audit.csv",
+                CreateV6RelationAuditCsv(snapshot));
+            WriteV6Csv(reportRoot, "gold-evaluation.csv",
+                CreateGoldEvaluationCsv(quality.GoldEvaluations));
+            WriteV6Csv(reportRoot, "evidence-distribution.csv",
+                CreateEvidenceDistributionCsv(snapshot));
+        }
+
+        /// <summary>XMZADD 20260916 使用固定属性顺序生成可由发布脚本直接读取的质量摘要。</summary>
+        private static string CreateV6SummaryJson(DictionaryV6QualityResult quality)
+        {
+            var text = new StringBuilder();
+            text.Append("{\n");
+            text.Append("  \"CanPromote\": ").Append(quality.CanPromote ? "true" : "false").Append(",\n");
+            AppendJsonNumber(text, "OfficialNameAccuracy", quality.OfficialNameAccuracy, true);
+            AppendJsonNumber(text, "SuggestedNameAccuracy", quality.SuggestedNameAccuracy, true);
+            AppendJsonNumber(text, "RelationDirectionAccuracy", quality.RelationDirectionAccuracy, true);
+            AppendJsonInteger(text, "UsedFieldGapCount", quality.UsedFieldGapCount, true);
+            AppendJsonInteger(text, "PseudoChineseOfficialCount", quality.PseudoChineseOfficialCount, true);
+            AppendJsonInteger(text, "OfficialConflictCount", quality.OfficialConflictCount, true);
+            AppendJsonInteger(text, "EntityTableCount", quality.EntityTableCount, true);
+            AppendJsonInteger(text, "AuditedEntityTableCount", quality.AuditedEntityTableCount, true);
+            AppendJsonInteger(text, "GoldTableCount", quality.GoldTableCount, true);
+            AppendJsonInteger(text, "GoldFieldCount", quality.GoldFieldCount, true);
+            AppendJsonInteger(text, "GoldRelationCount", quality.GoldRelationCount, true);
+            text.Append("  \"Failures\": [");
+            if (quality.Failures != null && quality.Failures.Count > 0) text.Append('\n');
+            if (quality.Failures != null)
+            {
+                for (int index = 0; index < quality.Failures.Count; index++)
+                {
+                    text.Append("    \"").Append(EscapeJson(quality.Failures[index])).Append('"');
+                    text.Append(index + 1 < quality.Failures.Count ? ",\n" : "\n");
+                }
+            }
+            text.Append("  ]\n}");
+            return text.ToString();
+        }
+
+        /// <summary>XMZADD 20260916 追加使用固定小数格式的 JSON 准确率属性。</summary>
+        private static void AppendJsonNumber(StringBuilder text, string name, double value, bool comma)
+        {
+            text.Append("  \"").Append(name).Append("\": ")
+                .Append(value.ToString("0.############", CultureInfo.InvariantCulture));
+            text.Append(comma ? ",\n" : "\n");
+        }
+
+        /// <summary>XMZADD 20260916 追加使用不变区域格式的 JSON 整数属性。</summary>
+        private static void AppendJsonInteger(StringBuilder text, string name, int value, bool comma)
+        {
+            text.Append("  \"").Append(name).Append("\": ")
+                .Append(value.ToString(CultureInfo.InvariantCulture));
+            text.Append(comma ? ",\n" : "\n");
+        }
+
+        /// <summary>XMZADD 20260916 转义摘要失败原因中的 JSON 控制字符。</summary>
+        private static string EscapeJson(string value)
+        {
+            return (value ?? string.Empty).Replace("\\", "\\\\")
+                .Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n");
+        }
+
+        /// <summary>XMZADD 20260916 统一以 UTF-8 BOM 写入 CSV，避免 Excel 错判中文编码。</summary>
+        private static void WriteV6Csv(string reportRoot, string fileName, string content)
+        {
+            File.WriteAllText(Path.Combine(reportRoot, fileName), content, new UTF8Encoding(true));
+        }
+
+        /// <summary>XMZADD 20260916 导出正式名称或首选参考名称的状态、评分和首条来源。</summary>
+        private static string CreateNameCoverageCsv(SnapshotData snapshot, bool suggested)
+        {
+            var rows = new List<V6NameCoverageRow>();
+            if (snapshot != null && snapshot.Tables != null)
+            {
+                for (int tableIndex = 0; tableIndex < snapshot.Tables.Count; tableIndex++)
+                {
+                    TableMetadata table = snapshot.Tables[tableIndex];
+                    if (table == null) continue;
+                    AddNameCoverageRow(rows, "Table", table, null,
+                        suggested ? table.SuggestedChineseName : table.ChineseName);
+                    if (table.Fields == null) continue;
+                    for (int fieldIndex = 0; fieldIndex < table.Fields.Count; fieldIndex++)
+                    {
+                        FieldMetadata field = table.Fields[fieldIndex];
+                        if (field != null)
+                        {
+                            AddNameCoverageRow(rows, "Field", table, field,
+                                suggested ? field.SuggestedChineseName : field.ChineseName);
+                        }
+                    }
+                }
+            }
+            rows.Sort(CompareNameCoverageRows);
+            var text = new StringBuilder("ObjectType,SchemaName,ObjectName,FieldName,ModuleName,ChineseName,Status,ConfidenceScore,RuleName,SourcePath,SourceLine\r\n");
+            for (int index = 0; index < rows.Count; index++)
+            {
+                V6NameCoverageRow row = rows[index];
+                AppendCsvRow(text, row.ObjectType, row.SchemaName, row.ObjectName, row.FieldName,
+                    row.ModuleName, row.ChineseName, row.Status,
+                    row.ConfidenceScore.ToString(CultureInfo.InvariantCulture), row.RuleName,
+                    row.SourcePath, row.SourceLine.ToString(CultureInfo.InvariantCulture));
+            }
+            return text.ToString();
+        }
+
+        /// <summary>XMZADD 20260916 把一个非空名称及首条证据加入覆盖明细。</summary>
+        private static void AddNameCoverageRow(IList<V6NameCoverageRow> rows, string objectType,
+            TableMetadata table, FieldMetadata field, MetadataValue value)
+        {
+            if (value == null || string.IsNullOrWhiteSpace(value.Value)) return;
+            EvidenceItem evidence = GetFirstEvidence(value);
+            rows.Add(new V6NameCoverageRow
+            {
+                ObjectType = objectType,
+                SchemaName = table.SchemaName ?? string.Empty,
+                ObjectName = table.ObjectName ?? string.Empty,
+                FieldName = field == null ? string.Empty : field.FieldName ?? string.Empty,
+                ModuleName = GetValue(table.ModuleName),
+                ChineseName = value.Value,
+                Status = value.Status.ToString(),
+                ConfidenceScore = value.ConfidenceScore,
+                RuleName = evidence == null ? string.Empty : evidence.RuleName ?? string.Empty,
+                SourcePath = evidence == null ? string.Empty : evidence.SourcePath ?? string.Empty,
+                SourceLine = evidence == null ? 0 : evidence.SourceLine
+            });
+        }
+
+        /// <summary>XMZADD 20260916 导出实际使用缺口、正式冲突或伪中文的统一专项清单。</summary>
+        private static string CreateQualityIssueCsv(IList<DictionaryV6NameAuditRecord> rows)
+        {
+            var ordered = new List<DictionaryV6NameAuditRecord>();
+            if (rows != null)
+            {
+                for (int index = 0; index < rows.Count; index++)
+                {
+                    if (rows[index] != null) ordered.Add(rows[index]);
+                }
+            }
+            ordered.Sort(CompareQualityIssueRows);
+            var text = new StringBuilder("ObjectType,SchemaName,ObjectName,FieldName,ModuleName,OfficialChineseName,SuggestedChineseName,Status,Reason,RuleName,SourcePath,SourceLine\r\n");
+            for (int index = 0; index < ordered.Count; index++)
+            {
+                DictionaryV6NameAuditRecord row = ordered[index];
+                AppendCsvRow(text, row.ObjectType, row.SchemaName, row.ObjectName, row.FieldName,
+                    row.ModuleName, row.OfficialChineseName, row.SuggestedChineseName,
+                    row.Status, row.Reason, row.RuleName, row.SourcePath,
+                    row.SourceLine.ToString(CultureInfo.InvariantCulture));
+            }
+            return text.ToString();
+        }
+
+        /// <summary>XMZADD 20260916 导出实体及已分类业务表的主模块、使用模块和名称覆盖。</summary>
+        private static string CreateModuleAttributionCsv(SnapshotData snapshot)
+        {
+            var rows = new List<TableMetadata>();
+            if (snapshot != null && snapshot.Tables != null)
+            {
+                for (int index = 0; index < snapshot.Tables.Count; index++)
+                {
+                    TableMetadata table = snapshot.Tables[index];
+                    if (table != null && (table.Category == DictionaryTableCategory.Business ||
+                        table.Category == DictionaryTableCategory.BaseData ||
+                        !string.IsNullOrWhiteSpace(GetValue(table.EntityName))))
+                    {
+                        rows.Add(table);
+                    }
+                }
+            }
+            rows.Sort(CompareTablesForV6Report);
+            var text = new StringBuilder("SchemaName,ObjectName,EntityName,Category,PrimaryModule,ModuleStatus,UsedByModules,OfficialChineseName,SuggestedChineseName,RuleName,SourcePath,SourceLine\r\n");
+            for (int index = 0; index < rows.Count; index++)
+            {
+                TableMetadata table = rows[index];
+                EvidenceItem evidence = GetFirstEvidence(table.ModuleName);
+                AppendCsvRow(text, table.SchemaName, table.ObjectName, GetValue(table.EntityName),
+                    table.Category.ToString(), GetValue(table.ModuleName),
+                    table.ModuleName == null ? string.Empty : table.ModuleName.Status.ToString(),
+                    JoinMetadataValues(table.UsedByModules), GetValue(table.ChineseName),
+                    GetValue(table.SuggestedChineseName),
+                    evidence == null ? string.Empty : evidence.RuleName,
+                    evidence == null ? string.Empty : evidence.SourcePath,
+                    evidence == null ? string.Empty : evidence.SourceLine.ToString(CultureInfo.InvariantCulture));
+            }
+            return text.ToString();
+        }
+
+        /// <summary>XMZADD 20260916 以竖线连接去重排序后的使用模块，避免数组顺序影响报告。</summary>
+        private static string JoinMetadataValues(IList<MetadataValue> values)
+        {
+            var names = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (values != null)
+            {
+                for (int index = 0; index < values.Count; index++)
+                {
+                    string name = GetValue(values[index]);
+                    if (!string.IsNullOrWhiteSpace(name) && seen.Add(name)) names.Add(name);
+                }
+            }
+            names.Sort(StringComparer.Ordinal);
+            return string.Join("|", names.ToArray());
+        }
+
+        /// <summary>XMZADD 20260916 按方向稳定键去重导出物理、代码和参考关系及来源。</summary>
+        private static string CreateV6RelationAuditCsv(SnapshotData snapshot)
+        {
+            var rows = new Dictionary<string, RelationMetadata>(StringComparer.OrdinalIgnoreCase);
+            if (snapshot != null && snapshot.Tables != null)
+            {
+                for (int tableIndex = 0; tableIndex < snapshot.Tables.Count; tableIndex++)
+                {
+                    TableMetadata table = snapshot.Tables[tableIndex];
+                    if (table == null || table.Relations == null) continue;
+                    for (int relationIndex = 0; relationIndex < table.Relations.Count; relationIndex++)
+                    {
+                        RelationMetadata relation = table.Relations[relationIndex];
+                        string key = MakeRelationKey(relation);
+                        if (relation != null && !rows.ContainsKey(key)) rows.Add(key, relation);
+                    }
+                }
+            }
+            var keys = new List<string>(rows.Keys);
+            keys.Sort(StringComparer.OrdinalIgnoreCase);
+            var text = new StringBuilder("ForeignKeyName,ParentSchema,ParentTable,ParentField,ChildSchema,ChildTable,ChildField,RelationType,Status,RuleName,SourcePath,SourceLine\r\n");
+            for (int index = 0; index < keys.Count; index++)
+            {
+                RelationMetadata relation = rows[keys[index]];
+                EvidenceItem evidence = GetFirstEvidence(relation.RelationType);
+                AppendCsvRow(text, relation.ForeignKeyName, relation.ParentSchemaName,
+                    relation.ParentTableName, relation.ParentFieldName, relation.ChildSchemaName,
+                    relation.ChildTableName, relation.ChildFieldName, GetValue(relation.RelationType),
+                    relation.RelationType == null ? string.Empty : relation.RelationType.Status.ToString(),
+                    evidence == null ? string.Empty : evidence.RuleName,
+                    evidence == null ? string.Empty : evidence.SourcePath,
+                    evidence == null ? string.Empty : evidence.SourceLine.ToString(CultureInfo.InvariantCulture));
+            }
+            return text.ToString();
+        }
+
+        /// <summary>XMZADD 20260916 导出每条金标的期望、正式结论、参考结论和命中状态。</summary>
+        private static string CreateGoldEvaluationCsv(IList<DictionaryV6GoldEvaluation> rows)
+        {
+            var ordered = new List<DictionaryV6GoldEvaluation>();
+            if (rows != null)
+            {
+                for (int index = 0; index < rows.Count; index++)
+                {
+                    if (rows[index] != null) ordered.Add(rows[index]);
+                }
+            }
+            ordered.Sort(CompareGoldEvaluationRows);
+            var text = new StringBuilder("Kind,StableKey,ExpectedChineseName,OfficialChineseName,SuggestedChineseName,OfficialMatch,SuggestedMatch,RelationMatch,EvidenceType,Source\r\n");
+            for (int index = 0; index < ordered.Count; index++)
+            {
+                DictionaryV6GoldEvaluation row = ordered[index];
+                AppendCsvRow(text, row.Kind, row.StableKey, row.ExpectedChineseName,
+                    row.OfficialChineseName, row.SuggestedChineseName,
+                    row.OfficialMatch.ToString(), row.SuggestedMatch.ToString(),
+                    row.RelationMatch.ToString(), row.EvidenceType, row.Source);
+            }
+            return text.ToString();
+        }
+
+        /// <summary>XMZADD 20260916 聚合名称、模块、用途、枚举和关系元数据的证据分布。</summary>
+        private static string CreateEvidenceDistributionCsv(SnapshotData snapshot)
+        {
+            var distribution = new Dictionary<string, V6EvidenceDistributionRow>(StringComparer.Ordinal);
+            if (snapshot != null && snapshot.Tables != null)
+            {
+                for (int tableIndex = 0; tableIndex < snapshot.Tables.Count; tableIndex++)
+                {
+                    TableMetadata table = snapshot.Tables[tableIndex];
+                    if (table == null) continue;
+                    AddEvidenceDistribution(distribution, "Table", "OfficialName", table.ChineseName);
+                    AddEvidenceDistribution(distribution, "Table", "SuggestedName", table.SuggestedChineseName);
+                    AddEvidenceDistribution(distribution, "Table", "Module", table.ModuleName);
+                    AddEvidenceDistribution(distribution, "Table", "Entity", table.EntityName);
+                    if (table.Fields != null)
+                    {
+                        for (int fieldIndex = 0; fieldIndex < table.Fields.Count; fieldIndex++)
+                        {
+                            FieldMetadata field = table.Fields[fieldIndex];
+                            if (field == null) continue;
+                            AddEvidenceDistribution(distribution, "Field", "OfficialName", field.ChineseName);
+                            AddEvidenceDistribution(distribution, "Field", "SuggestedName", field.SuggestedChineseName);
+                            AddEvidenceDistribution(distribution, "Field", "Usage", field.Usage);
+                            AddEvidenceDistribution(distribution, "Field", "EnumName", field.EnumName);
+                        }
+                    }
+                    if (table.Relations != null)
+                    {
+                        for (int relationIndex = 0; relationIndex < table.Relations.Count; relationIndex++)
+                        {
+                            RelationMetadata relation = table.Relations[relationIndex];
+                            if (relation != null)
+                            {
+                                AddEvidenceDistribution(distribution, "Relation", "RelationType", relation.RelationType);
+                            }
+                        }
+                    }
+                }
+            }
+            var rows = new List<V6EvidenceDistributionRow>(distribution.Values);
+            rows.Sort(CompareEvidenceDistributionRows);
+            var text = new StringBuilder("ObjectType,Layer,Status,RuleName,SourceType,Count\r\n");
+            for (int index = 0; index < rows.Count; index++)
+            {
+                V6EvidenceDistributionRow row = rows[index];
+                AppendCsvRow(text, row.ObjectType, row.Layer, row.Status, row.RuleName,
+                    row.SourceType, row.Count.ToString(CultureInfo.InvariantCulture));
+            }
+            return text.ToString();
+        }
+
+        /// <summary>XMZADD 20260916 按每条来源证据累计分布，无证据值单独标记以暴露不可追溯结论。</summary>
+        private static void AddEvidenceDistribution(
+            IDictionary<string, V6EvidenceDistributionRow> distribution,
+            string objectType, string layer, MetadataValue value)
+        {
+            if (value == null || string.IsNullOrWhiteSpace(value.Value)) return;
+            if (value.Evidence == null || value.Evidence.Count == 0)
+            {
+                IncrementEvidenceDistribution(distribution, objectType, layer,
+                    value.Status.ToString(), "(无证据)", value.SourceType);
+                return;
+            }
+            for (int index = 0; index < value.Evidence.Count; index++)
+            {
+                EvidenceItem evidence = value.Evidence[index];
+                IncrementEvidenceDistribution(distribution, objectType, layer,
+                    value.Status.ToString(), evidence == null ? string.Empty : evidence.RuleName,
+                    evidence == null ? value.SourceType : evidence.SourceType);
+            }
+        }
+
+        /// <summary>XMZADD 20260916 增加一个证据分布组合的计数。</summary>
+        private static void IncrementEvidenceDistribution(
+            IDictionary<string, V6EvidenceDistributionRow> distribution,
+            string objectType, string layer, string status, string ruleName, string sourceType)
+        {
+            string key = (objectType ?? string.Empty) + "\u001F" + (layer ?? string.Empty) + "\u001F" +
+                         (status ?? string.Empty) + "\u001F" + (ruleName ?? string.Empty) + "\u001F" +
+                         (sourceType ?? string.Empty);
+            V6EvidenceDistributionRow row;
+            if (!distribution.TryGetValue(key, out row))
+            {
+                row = new V6EvidenceDistributionRow
+                {
+                    ObjectType = objectType ?? string.Empty,
+                    Layer = layer ?? string.Empty,
+                    Status = status ?? string.Empty,
+                    RuleName = ruleName ?? string.Empty,
+                    SourceType = sourceType ?? string.Empty
+                };
+                distribution.Add(key, row);
+            }
+            row.Count++;
+        }
+
+        /// <summary>XMZADD 20260916 按对象类型、表和字段比较名称覆盖行。</summary>
+        private static int CompareNameCoverageRows(V6NameCoverageRow left, V6NameCoverageRow right)
+        {
+            int comparison = StringComparer.Ordinal.Compare(left.ObjectType, right.ObjectType);
+            if (comparison != 0) return comparison;
+            comparison = StringComparer.OrdinalIgnoreCase.Compare(left.SchemaName, right.SchemaName);
+            if (comparison != 0) return comparison;
+            comparison = StringComparer.OrdinalIgnoreCase.Compare(left.ObjectName, right.ObjectName);
+            return comparison != 0 ? comparison :
+                StringComparer.OrdinalIgnoreCase.Compare(left.FieldName, right.FieldName);
+        }
+
+        /// <summary>XMZADD 20260916 按表字段稳定顺序比较专项问题行。</summary>
+        private static int CompareQualityIssueRows(DictionaryV6NameAuditRecord left,
+            DictionaryV6NameAuditRecord right)
+        {
+            int comparison = StringComparer.OrdinalIgnoreCase.Compare(left.SchemaName, right.SchemaName);
+            if (comparison != 0) return comparison;
+            comparison = StringComparer.OrdinalIgnoreCase.Compare(left.ObjectName, right.ObjectName);
+            return comparison != 0 ? comparison :
+                StringComparer.OrdinalIgnoreCase.Compare(left.FieldName, right.FieldName);
+        }
+
+        /// <summary>XMZADD 20260916 按架构和对象名比较模块归属行。</summary>
+        private static int CompareTablesForV6Report(TableMetadata left, TableMetadata right)
+        {
+            int comparison = StringComparer.OrdinalIgnoreCase.Compare(left.SchemaName, right.SchemaName);
+            return comparison != 0 ? comparison :
+                StringComparer.OrdinalIgnoreCase.Compare(left.ObjectName, right.ObjectName);
+        }
+
+        /// <summary>XMZADD 20260916 按类型和稳定键比较金标明细行。</summary>
+        private static int CompareGoldEvaluationRows(DictionaryV6GoldEvaluation left,
+            DictionaryV6GoldEvaluation right)
+        {
+            int comparison = StringComparer.Ordinal.Compare(left.Kind, right.Kind);
+            return comparison != 0 ? comparison :
+                StringComparer.OrdinalIgnoreCase.Compare(left.StableKey, right.StableKey);
+        }
+
+        /// <summary>XMZADD 20260916 按证据分组列顺序比较汇总行。</summary>
+        private static int CompareEvidenceDistributionRows(V6EvidenceDistributionRow left,
+            V6EvidenceDistributionRow right)
+        {
+            int comparison = StringComparer.Ordinal.Compare(left.ObjectType, right.ObjectType);
+            if (comparison != 0) return comparison;
+            comparison = StringComparer.Ordinal.Compare(left.Layer, right.Layer);
+            if (comparison != 0) return comparison;
+            comparison = StringComparer.Ordinal.Compare(left.Status, right.Status);
+            if (comparison != 0) return comparison;
+            comparison = StringComparer.Ordinal.Compare(left.RuleName, right.RuleName);
+            return comparison != 0 ? comparison :
+                StringComparer.Ordinal.Compare(left.SourceType, right.SourceType);
+        }
+
         /// <summary>XMZADD 20260903 将一行值按 RFC 4180 基本规则转义，保证中文逗号和双引号不会破坏审计文件。</summary>
         private static void AppendCsvRow(StringBuilder text, params string[] values)
         {
@@ -1006,6 +1449,33 @@ namespace SHB.EosDataDictionary.Services
             public string FieldName { get; private set; }
             public ISet<string> UsageKinds { get; private set; }
             public SourceEvidence StrongestEvidence { get; set; }
+        }
+
+        /// <summary>XMZADD 20260916 保存正式名或参考名覆盖报告的一行稳定数据。</summary>
+        private sealed class V6NameCoverageRow
+        {
+            public string ObjectType { get; set; }
+            public string SchemaName { get; set; }
+            public string ObjectName { get; set; }
+            public string FieldName { get; set; }
+            public string ModuleName { get; set; }
+            public string ChineseName { get; set; }
+            public string Status { get; set; }
+            public int ConfidenceScore { get; set; }
+            public string RuleName { get; set; }
+            public string SourcePath { get; set; }
+            public int SourceLine { get; set; }
+        }
+
+        /// <summary>XMZADD 20260916 保存相同对象层、元数据层、状态与证据来源组合的计数。</summary>
+        private sealed class V6EvidenceDistributionRow
+        {
+            public string ObjectType { get; set; }
+            public string Layer { get; set; }
+            public string Status { get; set; }
+            public string RuleName { get; set; }
+            public string SourceType { get; set; }
+            public int Count { get; set; }
         }
 
         /// <summary>XMZADD 20260907 保存名称变更字段及其当前最强证据供稳定排序和导出。</summary>

@@ -19,7 +19,7 @@ namespace SHB.EosDataDictionary.Services
         private static readonly HashSet<string> ReliableLatinAbbreviations = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "ID", "GUID", "UID", "BOM", "OA", "AI", "EOS", "ERP", "API", "SQL", "URL", "IP",
-            "HTTP", "HTTPS", "XML", "JSON", "PDF", "CAD", "SAP", "MES", "WMS", "TMS"
+            "HTTP", "HTTPS", "XML", "JSON", "PDF", "CAD", "SAP", "MES", "WMS", "TMS", "A", "B"
         };
 
         /// <summary>XMZADD 20260901 将任意 EOS 标识符逐词翻译，并保留无法解释的缩写供后续知识库或 AI 推理。</summary>
@@ -278,6 +278,7 @@ namespace SHB.EosDataDictionary.Services
                 { "CHECKEDBYWHONAME", "封箱人" },
                 { "LOADFORDELIVERYBYWHONAME", "装柜人" },
                 { "LOTID", "批次ID" },
+                { "LOTID_UID", "批次唯一标识" },
                 { "LOTNO", "批次号" },
                 { "PS_ID", "产品结构ID" },
                 { "BU_ID", "事业部ID" },

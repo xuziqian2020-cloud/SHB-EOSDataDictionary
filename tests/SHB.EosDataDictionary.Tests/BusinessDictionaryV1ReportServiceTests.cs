@@ -311,6 +311,99 @@ namespace SHB.EosDataDictionary.Tests
             }
         }
 
+        /// <summary>XMZADD 20260916 验证 V6 质量结果生成十份固定排序、Excel 兼容且可追溯的发布审计文件。</summary>
+        [TestMethod]
+        public void Write_V6QualityResult_ProducesCompleteStableAuditFiles()
+        {
+            SnapshotData snapshot = CreateSnapshot();
+            var quality = new DictionaryV6QualityResult
+            {
+                CanPromote = true,
+                OfficialNameAccuracy = 0.995D,
+                SuggestedNameAccuracy = 0.96D,
+                RelationDirectionAccuracy = 0.99D,
+                EntityTableCount = 1,
+                AuditedEntityTableCount = 1,
+                GoldTableCount = 200,
+                GoldFieldCount = 1200,
+                GoldRelationCount = 100
+            };
+            quality.GoldEvaluations.Add(new DictionaryV6GoldEvaluation
+            {
+                Kind = "Field",
+                StableKey = "Field|dbo|B_Table|B_ID",
+                ExpectedChineseName = "B字段ID",
+                OfficialChineseName = "B字段ID",
+                OfficialMatch = true,
+                SuggestedMatch = true,
+                EvidenceType = "KnowledgeExact",
+                Source = "02_字段字典/_00_核心字段字典.md:20"
+            });
+            quality.GoldEvaluations.Add(new DictionaryV6GoldEvaluation
+            {
+                Kind = "Field",
+                StableKey = "Field|dbo|A_Table|A_ID",
+                ExpectedChineseName = "A字段ID",
+                OfficialChineseName = "A字段ID",
+                OfficialMatch = true,
+                SuggestedMatch = true,
+                EvidenceType = "DatabaseComment",
+                Source = "SqlExtendedDescription:A_Table.A_ID"
+            });
+            quality.UsedFieldGaps.Add(new DictionaryV6NameAuditRecord
+            {
+                ObjectType = "Field",
+                SchemaName = "dbo",
+                ObjectName = "A_Table",
+                FieldName = "Pending_ID",
+                ModuleName = "采购管理",
+                Reason = "业务代码实际使用，但正式名和参考名均不可靠"
+            });
+            string root = Path.Combine(Path.GetTempPath(), "shb-v6-report-" + Guid.NewGuid().ToString("N"));
+            string[] expectedFiles =
+            {
+                "summary.json",
+                "official-name-coverage.csv",
+                "suggested-name-coverage.csv",
+                "used-field-gaps.csv",
+                "conflicts.csv",
+                "pseudo-chinese.csv",
+                "module-attribution.csv",
+                "relation-audit.csv",
+                "gold-evaluation.csv",
+                "evidence-distribution.csv"
+            };
+
+            try
+            {
+                new BusinessDictionaryV1ReportService().Write(
+                    root, snapshot, null, new List<SourceEvidence>(), quality);
+
+                for (int index = 0; index < expectedFiles.Length; index++)
+                {
+                    string path = Path.Combine(root, expectedFiles[index]);
+                    Assert.IsTrue(File.Exists(path), expectedFiles[index]);
+                    if (path.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
+                    {
+                        byte[] bytes = File.ReadAllBytes(path);
+                        Assert.IsTrue(bytes.Length >= 3 && bytes[0] == 0xEF &&
+                            bytes[1] == 0xBB && bytes[2] == 0xBF,
+                            expectedFiles[index] + " 必须使用 UTF-8 BOM。");
+                    }
+                }
+                string summary = File.ReadAllText(Path.Combine(root, "summary.json"));
+                StringAssert.Contains(summary, "\"CanPromote\": true");
+                StringAssert.Contains(summary, "\"OfficialNameAccuracy\": 0.995");
+                string goldCsv = File.ReadAllText(Path.Combine(root, "gold-evaluation.csv"));
+                Assert.IsTrue(goldCsv.IndexOf("A_Table", StringComparison.Ordinal) <
+                    goldCsv.IndexOf("B_Table", StringComparison.Ordinal));
+            }
+            finally
+            {
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        }
+
         /// <summary>XMZADD 20260903 创建包含业务、技术和排除对象的最小报告快照。</summary>
         private static SnapshotData CreateSnapshot()
         {

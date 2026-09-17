@@ -101,6 +101,22 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual("金蝶编码", IdentifierTranslationService.TranslateFieldName("KIS_CODE"));
         }
 
+        /// <summary>XMZADD 20260916 验证 Lot 表顺序 GUID 字段显示为批次唯一标识，而不是粘连的 IDUID。</summary>
+        [TestMethod]
+        public void TranslateFieldName_LotIdUid_ReturnsBatchUniqueIdentifier()
+        {
+            Assert.AreEqual("批次唯一标识", IdentifierTranslationService.TranslateFieldName("LotID_UID"));
+        }
+
+        /// <summary>XMZADD 20260917 验证人工确认的子票号 A/B 业务后缀不会被误报为未翻译英文。</summary>
+        [TestMethod]
+        public void IsReliableChineseName_ConfirmedTicketVariantSuffixes_AreReliable()
+        {
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("子票号A"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("子票号B"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("子票号X"));
+        }
+
         /// <summary>XMZADD 20260904 验证没有任何可靠中文词义时显示统一待确认名称，而不是纯英文标识符。</summary>
         [TestMethod]
         public void TranslateUnknownIdentifiers_ReturnsReliableChinesePlaceholder()

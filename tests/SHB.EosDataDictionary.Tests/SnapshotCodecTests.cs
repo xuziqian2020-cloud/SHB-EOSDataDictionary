@@ -276,7 +276,8 @@ namespace SHB.EosDataDictionary.Tests
 
             Assert.IsFalse(json.Contains("未达到正式名称证据门槛"));
             Assert.IsFalse(json.Contains("\"Description\":null"));
-            Assert.IsNull(restored.Tables[0].Fields[0].ChineseName);
+            Assert.IsNotNull(restored.Tables[0].Fields[0].ChineseName);
+            Assert.AreEqual(string.Empty, restored.Tables[0].Fields[0].ChineseName.Value);
             Assert.AreEqual("客户标识参考名", restored.Tables[0].Fields[0].SuggestedChineseName.Value);
             Assert.AreEqual(ConfidenceStatus.Guessed,
                 restored.Tables[0].Fields[0].SuggestedChineseName.Status);

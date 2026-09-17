@@ -5,7 +5,7 @@ using SHB.EosDataDictionary.Models;
 
 namespace SHB.EosDataDictionary.Services
 {
-    /// <summary>XMZADD 20260907 在独立 SQLite 副本上执行 V4 EOS 业务字典富化并验证源库不变。</summary>
+    /// <summary>XMZADD 20260916 在独立 SQLite 副本上执行 V6 EOS 业务字典富化、质量门禁并验证源库不变。</summary>
     public sealed class OfflineDictionaryV1Generator
     {
         /// <summary>XMZADD 20260903 复制源字典、富化指定作用域、验证结构不变量并写出审计报告。</summary>
@@ -64,13 +64,22 @@ namespace SHB.EosDataDictionary.Services
 
             var reportService = new BusinessDictionaryV1ReportService();
             BusinessDictionaryV1Report report = reportService.Create(verificationSnapshot, sourceEvidence);
-            reportService.Write(options.ReportRoot, verificationSnapshot, report, sourceEvidence);
+            DictionaryV6QualityResult quality = null;
+            if (!string.IsNullOrWhiteSpace(options.GoldStandardPath))
+            {
+                var qualityService = new DictionaryV6QualityGateService();
+                DictionaryV6GoldStandard gold = qualityService.LoadGoldStandard(options.GoldStandardPath);
+                // 候选无论通过与否都保留完整报告，只有明确通过的结果才具备后续提升资格。
+                quality = qualityService.Evaluate(verificationSnapshot, sourceEvidence, gold);
+            }
+            reportService.Write(options.ReportRoot, verificationSnapshot, report, sourceEvidence, quality);
             return new OfflineDictionaryV1GenerationResult
             {
                 SourceSha256 = sourceHashAfter,
                 OutputSha256 = ComputeSha256(outputPath),
                 SourceEvidenceCount = sourceEvidence.Count,
-                Report = report
+                Report = report,
+                Quality = quality
             };
         }
 
@@ -94,6 +103,10 @@ namespace SHB.EosDataDictionary.Services
             if (string.IsNullOrWhiteSpace(options.SourceRoot) || !Directory.Exists(options.SourceRoot)) throw new DirectoryNotFoundException("EOS 源码目录不存在。");
             if (string.IsNullOrWhiteSpace(options.KnowledgeBaseRoot) || !Directory.Exists(options.KnowledgeBaseRoot)) throw new DirectoryNotFoundException("EOS 知识库目录不存在。");
             if (string.IsNullOrWhiteSpace(options.ReportRoot)) throw new ArgumentException("报告目录不能为空。", "ReportRoot");
+            if (!string.IsNullOrWhiteSpace(options.GoldStandardPath) && !File.Exists(options.GoldStandardPath))
+            {
+                throw new FileNotFoundException("V6 金标准文件不存在。", options.GoldStandardPath);
+            }
         }
 
         /// <summary>XMZADD 20260903 统计快照中的有效表对象数量。</summary>
@@ -145,7 +158,7 @@ namespace SHB.EosDataDictionary.Services
         }
     }
 
-    /// <summary>XMZADD 20260907 保存离线 V4 生成器的输入路径和目标快照作用域。</summary>
+    /// <summary>XMZADD 20260916 保存离线 V6 生成器的输入路径、金标路径和目标快照作用域。</summary>
     public sealed class OfflineDictionaryV1GenerationOptions
     {
         public string SourceDatabasePath { get; set; }
@@ -154,14 +167,16 @@ namespace SHB.EosDataDictionary.Services
         public string SourceRoot { get; set; }
         public string KnowledgeBaseRoot { get; set; }
         public string ReportRoot { get; set; }
+        public string GoldStandardPath { get; set; }
     }
 
-    /// <summary>XMZADD 20260907 返回 V4 输出哈希、源码证据量和覆盖率统计。</summary>
+    /// <summary>XMZADD 20260916 返回 V6 输出哈希、源码证据量、覆盖统计和发布门禁结论。</summary>
     public sealed class OfflineDictionaryV1GenerationResult
     {
         public string SourceSha256 { get; set; }
         public string OutputSha256 { get; set; }
         public int SourceEvidenceCount { get; set; }
         public BusinessDictionaryV1Report Report { get; set; }
+        public DictionaryV6QualityResult Quality { get; set; }
     }
 }

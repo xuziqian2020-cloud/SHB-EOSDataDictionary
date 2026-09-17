@@ -112,6 +112,68 @@ namespace SHB.EosDataDictionary.Tests
             }
         }
 
+        /// <summary>XMZADD 20260916 验证低于质量门槛的全量结果仍保留候选库和审计报告，但明确禁止提升。</summary>
+        [TestMethod]
+        public void Generate_QualityGateFails_KeepsCandidateAndWritesBlockingSummary()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-offline-v6-gate-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            string sourceDatabase = Path.Combine(root, "dictionary.db");
+            string outputDatabase = Path.Combine(root, "candidate.db");
+            string sourceRoot = Path.Combine(root, "source");
+            string knowledgeRoot = Path.Combine(root, "knowledge");
+            string reportRoot = Path.Combine(root, "report");
+            string goldPath = Path.Combine(root, "gold.json");
+            Directory.CreateDirectory(sourceRoot);
+            CreateKnowledgeFixture(knowledgeRoot);
+            File.WriteAllText(goldPath,
+                "{\"version\":\"test\",\"baselineRevision\":11,\"description\":\"test\",\"entries\":[]}",
+                new UTF8Encoding(false));
+            new SnapshotStore(sourceDatabase).ReplaceScope("test-scope", new SnapshotData
+            {
+                Revision = 11,
+                RefreshedAt = new DateTime(2026, 9, 16, 0, 0, 0, DateTimeKind.Utc),
+                Tables = new List<TableMetadata>
+                {
+                    new TableMetadata
+                    {
+                        ScopeKey = "test-scope",
+                        SchemaName = "dbo",
+                        ObjectName = "Item",
+                        ObjectType = "TABLE",
+                        Fields = new List<FieldMetadata>()
+                    }
+                }
+            });
+
+            try
+            {
+                OfflineDictionaryV1GenerationResult result = new OfflineDictionaryV1Generator().Generate(
+                    new OfflineDictionaryV1GenerationOptions
+                    {
+                        SourceDatabasePath = sourceDatabase,
+                        OutputDatabasePath = outputDatabase,
+                        ScopeKey = "test-scope",
+                        SourceRoot = sourceRoot,
+                        KnowledgeBaseRoot = knowledgeRoot,
+                        ReportRoot = reportRoot,
+                        GoldStandardPath = goldPath
+                    });
+
+                Assert.IsTrue(File.Exists(outputDatabase));
+                Assert.IsNotNull(result.Quality);
+                Assert.IsFalse(result.Quality.CanPromote);
+                Assert.IsTrue(File.Exists(Path.Combine(reportRoot, "summary.json")));
+                StringAssert.Contains(File.ReadAllText(Path.Combine(reportRoot, "summary.json")),
+                    "\"CanPromote\": false");
+            }
+            finally
+            {
+                SQLiteConnection.ClearAllPools();
+                Directory.Delete(root, true);
+            }
+        }
+
         /// <summary>XMZADD 20260903 验证离线富化后同步游标记录新的本地载荷哈希，避免启动时被远端同修订快照覆盖。</summary>
         [TestMethod]
         public void Generate_SynchronizedScope_UpdatesLocalPayloadHashWithoutChangingRemoteCursor()

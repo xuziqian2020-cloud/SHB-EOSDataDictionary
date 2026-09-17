@@ -1,10 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using SHB.EosDataDictionary.Services;
 
 namespace SHB.EosDataDictionary.Enricher
 {
-    /// <summary>XMZADD 20260907 提供 EOS 业务数据字典 V4 的离线副本生成入口。</summary>
+    /// <summary>XMZADD 20260916 提供带金标准质量门禁的 EOS 业务数据字典 V6 离线候选生成入口。</summary>
     internal static class Program
     {
         /// <summary>XMZADD 20260903 解析固定命令行参数并输出可核验的富化覆盖统计。</summary>
@@ -20,11 +21,13 @@ namespace SHB.EosDataDictionary.Enricher
                     ScopeKey = ReadRequired(values, "--scope"),
                     SourceRoot = ReadRequired(values, "--source-root"),
                     KnowledgeBaseRoot = ReadRequired(values, "--knowledge-root"),
-                    ReportRoot = ReadRequired(values, "--report-root")
+                    ReportRoot = ReadRequired(values, "--report-root"),
+                    GoldStandardPath = ReadRequired(values, "--gold-standard")
                 };
                 OfflineDictionaryV1GenerationResult result = new OfflineDictionaryV1Generator().Generate(options);
                 BusinessDictionaryV1Report report = result.Report;
-                Console.WriteLine("EOS 业务数据字典 V4 已生成。");
+                DictionaryV6QualityResult quality = result.Quality;
+                Console.WriteLine("EOS 业务数据字典 V6 候选已生成。");
                 Console.WriteLine("源库 SHA-256：" + result.SourceSha256);
                 Console.WriteLine("输出库 SHA-256：" + result.OutputSha256);
                 Console.WriteLine("源码证据：" + result.SourceEvidenceCount);
@@ -36,14 +39,30 @@ namespace SHB.EosDataDictionary.Enricher
                                   report.UnclassifiedTableCount);
                 Console.WriteLine("实际使用字段：" + report.ActualUsedFieldCount);
                 Console.WriteLine("实际使用字段已命名：" + report.ActualUsedNamedFieldCount);
-                Console.WriteLine("V4 细化名称：" + report.V4RefinedNameCount);
+                Console.WriteLine("V6 细化名称：" + report.V4RefinedNameCount);
                 Console.WriteLine("实际使用字段待复核：" + report.ActualUsedReviewFieldCount);
                 Console.WriteLine("多义冲突：" + report.AmbiguousConflictCount);
+                Console.WriteLine("正式名/参考名/关系准确率：" +
+                    FormatPercent(quality.OfficialNameAccuracy) + "/" +
+                    FormatPercent(quality.SuggestedNameAccuracy) + "/" +
+                    FormatPercent(quality.RelationDirectionAccuracy));
+                Console.WriteLine("实体表审计：" + quality.AuditedEntityTableCount + "/" +
+                                  quality.EntityTableCount);
+                if (!quality.CanPromote)
+                {
+                    Console.Error.WriteLine("V6 候选未通过发布门禁，已保留候选库和审计报告，禁止提升。");
+                    for (int index = 0; index < quality.Failures.Count; index++)
+                    {
+                        Console.Error.WriteLine("- " + quality.Failures[index]);
+                    }
+                    return 2;
+                }
+                Console.WriteLine("V6 发布门禁：通过，可进入规范快照提升步骤。");
                 return 0;
             }
             catch (Exception exception)
             {
-                Console.Error.WriteLine("V4 生成失败：" + exception);
+                Console.Error.WriteLine("V6 生成失败：" + exception);
                 return 1;
             }
         }
@@ -76,6 +95,12 @@ namespace SHB.EosDataDictionary.Enricher
                 throw new ArgumentException("缺少必填参数：" + name);
             }
             return value;
+        }
+
+        /// <summary>XMZADD 20260916 使用固定两位小数输出质量门禁百分比，便于人工核对。</summary>
+        private static string FormatPercent(double value)
+        {
+            return (value * 100D).ToString("0.00", CultureInfo.InvariantCulture) + "%";
         }
     }
 }

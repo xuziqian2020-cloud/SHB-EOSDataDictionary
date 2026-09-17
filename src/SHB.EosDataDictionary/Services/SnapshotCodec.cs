@@ -361,6 +361,8 @@ namespace SHB.EosDataDictionary.Services
                 {
                     continue;
                 }
+                table.ChineseName = RestoreEmptyOfficialName(
+                    table.ChineseName, table.SuggestedChineseName);
                 table.AlternativeChineseNames = CopyMutableList(table.AlternativeChineseNames);
                 table.RejectedSuggestionFingerprints = CopyMutableList(table.RejectedSuggestionFingerprints);
                 table.UsedByModules = CopyMutableList(table.UsedByModules);
@@ -375,10 +377,29 @@ namespace SHB.EosDataDictionary.Services
                     {
                         continue;
                     }
+                    field.ChineseName = RestoreEmptyOfficialName(
+                        field.ChineseName, field.SuggestedChineseName);
                     field.AlternativeChineseNames = CopyMutableList(field.AlternativeChineseNames);
                     field.RejectedSuggestionFingerprints = CopyMutableList(field.RejectedSuggestionFingerprints);
                 }
             }
+        }
+
+        /// <summary>XMZADD 20260916 读回时为已有参考译名恢复旧调用方可安全访问的空正式名对象。</summary>
+        private static MetadataValue RestoreEmptyOfficialName(MetadataValue official,
+            MetadataValue suggested)
+        {
+            if (official != null || suggested == null || string.IsNullOrWhiteSpace(suggested.Value))
+            {
+                return official;
+            }
+            return new MetadataValue
+            {
+                Value = string.Empty,
+                Status = ConfidenceStatus.PendingConfirmation,
+                SourceSummary = "未达到正式名称证据门槛",
+                Evidence = new List<EvidenceItem>()
+            };
         }
 
         /// <summary>XMZADD 20260911 将快照集合恢复为非空可变列表，保证解码后仍可继续维护参考译名。</summary>
