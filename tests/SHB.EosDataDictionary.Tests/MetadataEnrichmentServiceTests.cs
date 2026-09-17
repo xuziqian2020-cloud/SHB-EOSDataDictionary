@@ -655,7 +655,7 @@ namespace SHB.EosDataDictionary.Tests
             Assert.AreEqual("财务管理", snapshot.Tables[0].UsedByModules[1].Value);
         }
 
-        /// <summary>XMZADD 20260831 验证显示模型在中文名称缺失时提供保守文案而不显示待确认推测。</summary>
+        /// <summary>XMZADD 20260917 验证正式中文名缺失时统一显示待确认且不把参考译名冒充正式名称。</summary>
         [TestMethod]
         public void DisplayModels_UseConservativeTextWhenChineseNameIsMissing()
         {
@@ -672,10 +672,10 @@ namespace SHB.EosDataDictionary.Tests
                 ChineseName = new MetadataValue { Value = " " }
             });
 
-            Assert.AreEqual("暂无中文名称", table.ChineseName);
-            Assert.AreEqual("暂无中文名称", field.ChineseName);
-            Assert.AreEqual("暂无中文名称", blankNameTable.ChineseName);
-            Assert.AreEqual("暂无中文名称", blankNameField.ChineseName);
+            Assert.AreEqual("待确认", table.ChineseName);
+            Assert.AreEqual("待确认", field.ChineseName);
+            Assert.AreEqual("待确认", blankNameTable.ChineseName);
+            Assert.AreEqual("待确认", blankNameField.ChineseName);
         }
 
         /// <summary>XMZADD 20260831 验证图片名称字段由完整词典翻译时保留推测状态和名称翻译来源。</summary>
