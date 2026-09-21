@@ -308,6 +308,24 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsNull(FindEvidence(evidence, "a", "Owner_Company_ID", "GridColumnCaption"));
         }
 
+        /// <summary>XMZADD 20260918 验证动态 SQL 辅助方法的字符串参数不会被子查询单表误认成物理字段。</summary>
+        [TestMethod]
+        public void Extract_DynamicSqlHelperStringArgument_DoesNotPublishArgumentAsSubqueryField()
+        {
+            string[] lines =
+            {
+                "sql = \"SELECT Ac.Ac_Quantity FROM \" & account.Ac_Table & \" AS Ac \" & _",
+                "      \"WHERE Ac_Entity IN (SELECT ID_Customer FROM Bu WHERE ID_Customer>0) \" & _",
+                "      \"AND (\" & Ac_Title.Get_Title_Pro_Sell_Plus(\"Ac\") & \")\""
+            };
+
+            IList<SourceEvidence> evidence = new EosBusinessUsageEvidenceExtractor().Extract(
+                "W/公共服务/frmAc_Inv_Public.vb", "W/公共服务", lines);
+
+            Assert.IsNull(FindEvidence(evidence, "Bu", "Ac", "SqlFieldUsage"));
+            Assert.IsNotNull(FindEvidence(evidence, "Bu", "ID_Customer", "SqlFieldUsage"));
+        }
+
         /// <summary>XMZADD 20260905 验证连续同变量 SQL 追加共享别名上下文且各字段保留实际源码行。</summary>
         [TestMethod]
         public void Extract_ConsecutiveSameVariableSqlAppend_CombinesWithinWindow()

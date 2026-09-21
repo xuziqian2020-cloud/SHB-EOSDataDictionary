@@ -335,6 +335,53 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("订单条目ID 属于Purchase_Order_Item"));
         }
 
+        /// <summary>XMZADD 20260917 验证“方法”作为字段业务名时可用，而带流程说明的句子仍被拒绝。</summary>
+        [TestMethod]
+        public void IsReliableChineseName_MethodBusinessNouns_AreNotTreatedAsProceduralText()
+        {
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("控制方法"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("预算方法"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("测量方法"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("该方法用于计算金额"));
+        }
+
+        /// <summary>XMZADD 20260917 验证“点击次数”作为业务计数字段可用，而操作指令仍被拒绝。</summary>
+        [TestMethod]
+        public void IsReliableChineseName_ClickCount_IsNotTreatedAsProceduralText()
+        {
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("点击次数"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("点击操作"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("点击按钮"));
+        }
+
+        /// <summary>XMZADD 20260917 验证业务时间字段不会被“开始时”流程措辞规则误杀。</summary>
+        [TestMethod]
+        public void IsReliableChineseName_StartTimeBusinessNames_AreReliable()
+        {
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("开始时间"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("工作开始时间"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("开始时必须填写数量"));
+        }
+
+        /// <summary>XMZADD 20260917 验证跨业务域含义稳定的基础技术与状态字段可生成完整中文名。</summary>
+        [DataTestMethod]
+        [DataRow("IP", "IP地址")]
+        [DataRow("MAC", "MAC地址")]
+        [DataRow("SQL", "SQL语句")]
+        [DataRow("Creater", "创建人")]
+        [DataRow("IsDelete", "是否删除")]
+        [DataRow("IsDeleted", "是否删除")]
+        [DataRow("Actived", "是否有效")]
+        [DataRow("Freezed", "是否冻结")]
+        [DataRow("Frozen", "是否冻结")]
+        [DataRow("StartTime", "开始时间")]
+        [DataRow("Work_StartTime", "工作开始时间")]
+        public void TranslateFieldName_StableTechnicalAndStateTerms_ReturnsChinese(string source, string expected)
+        {
+            Assert.AreEqual(expected, IdentifierTranslationService.TranslateFieldName(source));
+            Assert.IsTrue(IdentifierTranslationService.IsFieldNameFullyTranslated(source));
+        }
+
         /// <summary>XMZADD 20260916 验证可翻译英文词根不得混入正式中文名，同时保留开发人员通用的技术缩写。</summary>
         [TestMethod]
         public void IsReliableChineseName_UntranslatedLatinFragments_AreRejected()
@@ -349,6 +396,169 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("产品BOM"));
             Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("OA付款批次"));
             Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("接口URL"));
+        }
+
+        /// <summary>XMZADD 20260917 验证相邻稳定缩写可逐段识别且未知缩写仍不能混入中文名。</summary>
+        [TestMethod]
+        public void IsReliableChineseName_AdjacentStableAbbreviations_AreSegmented()
+        {
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("装配BOMID"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("OA接口ID"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("MAC地址"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("申请人HRID"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("未知NQSID"));
+        }
+
+        /// <summary>XMZADD 20260919 验证图档格式和工程软件专有名称可保留标准英文缩写。</summary>
+        [TestMethod]
+        public void IsReliableChineseName_EngineeringFileTerms_AreReliable()
+        {
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("HTML文档文件夹ID"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("CATIA文件库ID"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("CGR文件ID"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("SolidWorks文件库ID"));
+            Assert.IsTrue(IdentifierTranslationService.IsReliableChineseName("UG文件ID"));
+            Assert.IsFalse(IdentifierTranslationService.IsReliableChineseName("XYZ文件ID"));
+        }
+
+        /// <summary>XMZADD 20260917 验证新人常见的完整英文、状态和技术字段采用自然中文业务名。</summary>
+        [DataTestMethod]
+        [DataRow("ContextID", "上下文ID")]
+        [DataRow("Empty", "是否为空")]
+        [DataRow("Obsolete", "是否作废")]
+        [DataRow("Title", "标题")]
+        [DataRow("Initiator", "发起人")]
+        [DataRow("Abstract", "摘要")]
+        [DataRow("SNCode", "序列号")]
+        [DataRow("Delta", "差值")]
+        [DataRow("Sure", "是否确认")]
+        [DataRow("Copyed", "是否已复制")]
+        [DataRow("FontItalic", "字体斜体")]
+        [DataRow("FontBold", "字体加粗")]
+        [DataRow("SenderIP", "发送方IP地址")]
+        [DataRow("ReceiverIP", "接收方IP地址")]
+        [DataRow("OP_Des", "操作描述")]
+        [DataRow("RootCause", "根本原因")]
+        [DataRow("LengthBytes", "字节长度")]
+        [DataRow("CanWrite", "是否可写")]
+        [DataRow("CanRead", "是否可读")]
+        [DataRow("executeSuccess", "执行成功")]
+        [DataRow("FUSEORGID", "使用组织ID")]
+        public void TranslateFieldName_StableDeveloperVocabulary_ReturnsNaturalChinese(string source, string expected)
+        {
+            Assert.AreEqual(expected, IdentifierTranslationService.TranslateFieldName(source));
+            Assert.IsTrue(IdentifierTranslationService.IsFieldNameFullyTranslated(source));
+        }
+
+        /// <summary>XMZADD 20260917 验证源码中反复出现的人员、业务对象和状态字段采用新人可直接理解的中文名。</summary>
+        [DataTestMethod]
+        [DataRow("Defect_ID", "缺陷ID")]
+        [DataRow("OARequstID", "OA申请ID")]
+        [DataRow("OA_RequestID", "OA申请ID")]
+        [DataRow("OARequestID", "OA申请ID")]
+        [DataRow("Handler_ID", "处理人ID")]
+        [DataRow("Job_ID", "岗位ID")]
+        [DataRow("Mould_ID", "模具ID")]
+        [DataRow("Finished", "是否完成")]
+        [DataRow("Checked", "是否已检查")]
+        [DataRow("Accepted", "是否已接受")]
+        [DataRow("Model", "型号")]
+        [DataRow("PC", "计算机名")]
+        [DataRow("RID", "关联记录ID")]
+        public void TranslateFieldName_VerifiedCommonBusinessFields_ReturnNaturalChinese(
+            string source, string expected)
+        {
+            Assert.AreEqual(expected, IdentifierTranslationService.TranslateFieldName(source));
+            Assert.IsTrue(IdentifierTranslationService.IsFieldNameFullyTranslated(source));
+        }
+
+        /// <summary>XMZADD 20260917 验证含义稳定的完整英文词根能组合为可读中文且不残留英文。</summary>
+        [DataTestMethod]
+        [DataRow("ApprovalMode", "审批模式")]
+        [DataRow("AvailableCapacity", "可用产能")]
+        [DataRow("BeginPoint", "起点")]
+        [DataRow("CorrectiveMeasures", "纠正措施")]
+        [DataRow("Deadline", "截止时间")]
+        [DataRow("Deleter", "删除人")]
+        [DataRow("DemandForecast", "需求预测")]
+        [DataRow("Destination", "目的地")]
+        [DataRow("DirectDiscount", "直接折扣")]
+        [DataRow("DrawingRequirement", "图纸要求")]
+        [DataRow("ExecutorNames", "执行人姓名")]
+        [DataRow("LogisticsCycle", "物流周期")]
+        [DataRow("MaintenanceCycle", "维护周期")]
+        [DataRow("NextMonthForecast", "下月预测")]
+        [DataRow("ServiceLife", "使用寿命")]
+        [DataRow("TemporaryMeasure", "临时措施")]
+        [DataRow("TheoreticalCapacity", "理论产能")]
+        [DataRow("Upload_PC_IP", "上传计算机IP地址")]
+        [DataRow("Width", "宽度")]
+        public void TranslateFieldName_StableEnglishVocabulary_ComposesReadableChinese(
+            string source, string expected)
+        {
+            Assert.AreEqual(expected, IdentifierTranslationService.TranslateFieldName(source));
+            Assert.IsTrue(IdentifierTranslationService.IsFieldNameFullyTranslated(source));
+        }
+
+        /// <summary>XMZADD 20260917 验证无法解释的实体缩写前缀可省略且完整业务后缀仍生成可审阅中文名。</summary>
+        [DataTestMethod]
+        [DataRow("ED_Explain", "说明", "ED")]
+        [DataRow("ER_Accounting", "会计核算", "ER")]
+        [DataRow("DSP_Executors", "执行人", "DSP")]
+        [DataRow("NCR_Initiator", "发起人", "NCR")]
+        [DataRow("P_Endowment", "养老保险", "P")]
+        public void TryTranslateFieldNameWithoutUnknownPrefix_StableSuffix_ReturnsChinese(
+            string source, string expected, string expectedPrefix)
+        {
+            string translated;
+            string omittedPrefix;
+
+            bool success = IdentifierTranslationService.TryTranslateFieldNameWithoutUnknownPrefix(
+                source, out translated, out omittedPrefix);
+
+            Assert.IsTrue(success);
+            Assert.AreEqual(expected, translated);
+            Assert.AreEqual(expectedPrefix, omittedPrefix);
+        }
+
+        /// <summary>XMZADD 20260917 验证仅剩 ID 或完整未知单词时不得通过省略前缀伪造字段含义。</summary>
+        [DataTestMethod]
+        [DataRow("Ac_ID")]
+        [DataRow("PID")]
+        [DataRow("Lastest_Income")]
+        public void TryTranslateFieldNameWithoutUnknownPrefix_InsufficientMeaning_ReturnsFalse(
+            string source)
+        {
+            string translated;
+            string omittedPrefix;
+
+            Assert.IsFalse(IdentifierTranslationService.TryTranslateFieldNameWithoutUnknownPrefix(
+                source, out translated, out omittedPrefix));
+        }
+
+        /// <summary>XMZADD 20260917 验证第三批稳定业务词根覆盖质量、人员、财务、文件和设备场景。</summary>
+        [DataTestMethod]
+        [DataRow("AirFare", "航空费用")]
+        [DataRow("ColdRootID", "冷根目录ID")]
+        [DataRow("Planned_Maintenance_Cycle", "计划维护周期")]
+        [DataRow("DifferenceCapacityForecast", "差异产能预测")]
+        [DataRow("Jobless", "失业保险")]
+        [DataRow("Medical", "医疗保险")]
+        [DataRow("Alternate_Field1", "备用字段1")]
+        [DataRow("DocumentStatus", "文档状态")]
+        [DataRow("EquipmentInspection", "设备检验")]
+        [DataRow("Noticee_ID", "被通知人ID")]
+        [DataRow("PermanentMeasure", "永久措施")]
+        [DataRow("ReconciliationStatus", "对账状态")]
+        [DataRow("SupplierSatisfaction", "供应商满意度")]
+        [DataRow("TareWeight", "皮重重量")]
+        [DataRow("TransmissionMechanism", "传动机构")]
+        [DataRow("WrittenConclusion", "书面结论")]
+        public void TranslateFieldName_ThirdStableVocabularyBatch_ReturnsNaturalChinese(
+            string source, string expected)
+        {
+            Assert.AreEqual(expected, IdentifierTranslationService.TranslateFieldName(source));
+            Assert.IsTrue(IdentifierTranslationService.IsFieldNameFullyTranslated(source));
         }
 
         /// <summary>XMZADD 20260907 验证金蝶 F 字段前缀不会成为未知缩写，也不会丢失金蝶来源语义。</summary>

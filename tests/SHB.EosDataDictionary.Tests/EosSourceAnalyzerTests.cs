@@ -700,6 +700,40 @@ namespace SHB.EosDataDictionary.Tests
             }
         }
 
+        /// <summary>XMZADD 20260918 验证生成实体的 mIDCol 声明可作为缺失数据库主键约束时的代码级主键证据。</summary>
+        [TestMethod]
+        public void Analyze_GeneratedEntityIdColumn_PublishesPrimaryKeyEvidence()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "shb-source-entity-key-" + Guid.NewGuid().ToString("N"));
+            string file = Path.Combine(root, "ERP", "表-类定义", "code_Order.vb");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file,
+                "' 表-类生成代码\r\n" +
+                "Partial Public Class t_Order\r\n" +
+                "    Shared ReadOnly mIDCol As String = \"Order_ID\"\r\n" +
+                "    Public Property f_Order_ID() As Int64\r\n" +
+                "End Class\r\n", Encoding.UTF8);
+
+            try
+            {
+                IList<SourceEvidence> evidence = new EosSourceAnalyzer().Analyze(root);
+                SourceEvidence key = FindEvidence(evidence, "Order", "Order_ID", "EntityPrimaryKey");
+
+                Assert.IsNotNull(key);
+                Assert.AreEqual(SourceEvidenceOrigin.GeneratedEntity, key.Origin);
+                Assert.AreEqual(SourceEvidenceStrength.Authoritative, key.Strength);
+                Assert.AreEqual(SourceUsageKind.Unknown, key.UsageKind);
+                Assert.AreEqual(3, key.Evidence.SourceLine);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
         [TestMethod]
         public void Analyze_FindsTableEntityFieldAndEnumEvidence()
         {

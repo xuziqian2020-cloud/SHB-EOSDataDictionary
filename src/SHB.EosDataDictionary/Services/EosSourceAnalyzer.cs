@@ -20,6 +20,9 @@ namespace SHB.EosDataDictionary.Services
         private static readonly SourceTextDecoder SourceDecoder = new SourceTextDecoder();
         private static readonly Regex ClassRegex = new Regex(@"^\s*(?:<[^>]+>\s*)*(?:(?:Public|Private|Friend|Protected|Partial|MustInherit|NotInheritable|static|partial|public|private|internal|abstract|sealed)\s+)*(?:Class|class)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)", RegexOptions.Compiled);
         private static readonly Regex TableRegex = new Regex("\\b(?:TableName|mTable)\\s*(?:As\\s+String\\s*)?=\\s*\"(?<name>[^\"]+)\"", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex EntityPrimaryKeyRegex = new Regex(
+            "\\bmIDCol\\s*(?:As\\s+String\\s*)?=\\s*\"(?<field>[A-Za-z_][A-Za-z0-9_]*)\"",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex PropertyRegex = new Regex(@"^\s*(?:Public|Private|Friend|Protected)?\s*(?:Default\s+)?Property\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:\s*\([^)]*\))?\s*(?:As\s+(?:New\s+)?(?<type>[A-Za-z_][A-Za-z0-9_.]*))?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex CSharpPropertyRegex = new Regex(@"^\s*(?:public|private|protected|internal)\s+(?:static\s+)?(?<type>[A-Za-z_][A-Za-z0-9_<>,.\?\[\]]*)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{", RegexOptions.Compiled);
         private static readonly Regex EnumRegex = new Regex(@"^\s*(?:Public|Private|Friend|Protected|public|private|internal|protected)?\s*(?:Enum|enum)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)", RegexOptions.Compiled);
@@ -228,6 +231,16 @@ namespace SHB.EosDataDictionary.Services
                     currentTable = tableMatch.Groups["name"].Value;
                     AddEvidence(result, currentTable, null, currentEntity, modulePath, GetAdjacentComment(lastChineseComment, lastChineseCommentLine, lineIndex),
                         relativePath, lineIndex + 1, "TableNameProperty", "从源码 TableName 映射匹配数据库对象。", originalLine,
+                        scanBudget, sourceFileKind, canUseChineseEvidence);
+                }
+
+                Match entityPrimaryKeyMatch = EntityPrimaryKeyRegex.Match(line);
+                if (entityPrimaryKeyMatch.Success && !string.IsNullOrWhiteSpace(currentTable))
+                {
+                    string primaryKeyField = entityPrimaryKeyMatch.Groups["field"].Value;
+                    AddEvidence(result, currentTable, primaryKeyField, currentEntity, modulePath, null,
+                        relativePath, lineIndex + 1, "EntityPrimaryKey",
+                        "EOS 生成实体的 mIDCol 明确声明该字段是对象主键。", originalLine,
                         scanBudget, sourceFileKind, canUseChineseEvidence);
                 }
 
@@ -521,6 +534,7 @@ namespace SHB.EosDataDictionary.Services
             return string.Equals(ruleName, "EntityClassConvention", StringComparison.Ordinal) ||
                    string.Equals(ruleName, "KisEntityClass", StringComparison.Ordinal) ||
                    string.Equals(ruleName, "TableNameProperty", StringComparison.Ordinal) ||
+                   string.Equals(ruleName, "EntityPrimaryKey", StringComparison.Ordinal) ||
                    string.Equals(ruleName, "EntityProperty", StringComparison.Ordinal) ||
                    string.Equals(ruleName, "EntityObjectRelation", StringComparison.Ordinal);
         }

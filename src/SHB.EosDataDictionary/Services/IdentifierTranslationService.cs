@@ -15,11 +15,12 @@ namespace SHB.EosDataDictionary.Services
         private static readonly Regex IdentifierTokenRegex = new Regex(@"[A-Z]+(?=[A-Z][a-z]|\d|$)|[A-Z]?[a-z]+|\d+|[\u4e00-\u9fff]+", RegexOptions.Compiled);
         private static readonly Regex LatinFragmentRegex = new Regex("[A-Za-z]+", RegexOptions.Compiled);
         private static readonly Regex UnreliablePunctuationRegex = new Regex(@"[,，;；=()（）{}\[\]<>_]", RegexOptions.Compiled);
-        private static readonly Regex ProceduralPhraseRegex = new Regex("表示|用于|如果|当.+时|进行|代码|方法|函数|返回|点击|必须|开始时|总数|绑定到|引用方|属于", RegexOptions.Compiled);
+        private static readonly Regex ProceduralPhraseRegex = new Regex("表示|用于|如果|当.+时|进行|代码|函数|返回|点击(?:操作|按钮)|必须|开始时(?:应|需|要|请|必须)|总数|绑定到|引用方|属于", RegexOptions.Compiled);
         private static readonly HashSet<string> ReliableLatinAbbreviations = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "ID", "GUID", "UID", "BOM", "OA", "AI", "EOS", "ERP", "API", "SQL", "URL", "IP",
-            "HTTP", "HTTPS", "XML", "JSON", "PDF", "CAD", "SAP", "MES", "WMS", "TMS", "A", "B"
+            "HTTP", "HTTPS", "HTML", "XML", "JSON", "PDF", "CAD", "CATIA", "CGR", "SOLIDWORKS",
+            "UG", "SAP", "MES", "WMS", "TMS", "MAC", "A", "B"
         };
 
         /// <summary>XMZADD 20260901 将任意 EOS 标识符逐词翻译，并保留无法解释的缩写供后续知识库或 AI 推理。</summary>
@@ -130,6 +131,45 @@ namespace SHB.EosDataDictionary.Services
             return result.UnknownTokens.Count == 0 && !string.IsNullOrWhiteSpace(result.Value);
         }
 
+        /// <summary>XMZADD 20260917 省略无法解释的短实体前缀并翻译完整业务后缀，满足未知缩写不混入中文名的展示规则。</summary>
+        public static bool TryTranslateFieldNameWithoutUnknownPrefix(string fieldName,
+            out string translated, out string omittedPrefix)
+        {
+            translated = string.Empty;
+            omittedPrefix = string.Empty;
+            IList<string> tokens = SplitIdentifier(fieldName);
+            if (tokens.Count < 2)
+            {
+                return false;
+            }
+
+            var prefixBuilder = new StringBuilder();
+            for (int startIndex = 1; startIndex < tokens.Count; startIndex++)
+            {
+                string prefixToken = tokens[startIndex - 1];
+                if (!IsOmittableUnknownPrefix(prefixToken))
+                {
+                    return false;
+                }
+                if (prefixBuilder.Length > 0)
+                {
+                    prefixBuilder.Append("_");
+                }
+                prefixBuilder.Append(prefixToken);
+
+                string suffixIdentifier = JoinIdentifierTokens(tokens, startIndex);
+                IdentifierTranslationResult suffix = TranslateIdentifier(suffixIdentifier, true);
+                if (suffix.UnknownTokens.Count == 0 && suffix.HasTranslatedToken &&
+                    IsReliableChineseName(suffix.Value))
+                {
+                    translated = suffix.Value;
+                    omittedPrefix = prefixBuilder.ToString();
+                    return true;
+                }
+            }
+            return false;
+        }
+
         /// <summary>XMZADD 20260831 判断模块名称是否属于技术目录，避免技术实现分类误导为业务模块。</summary>
         public static bool IsTechnicalModuleName(string moduleName)
         {
@@ -183,12 +223,46 @@ namespace SHB.EosDataDictionary.Services
             for (int index = 0; index < matches.Count; index++)
             {
                 string fragment = matches[index].Value;
-                if (!ReliableLatinAbbreviations.Contains(fragment))
+                if (!ReliableLatinAbbreviations.Contains(fragment) &&
+                    !CanSegmentReliableLatinAbbreviations(fragment))
                 {
                     return true;
                 }
             }
             return false;
+        }
+
+        /// <summary>XMZADD 20260917 将 BOMID、HRID 等相邻稳定缩写拆分核验，避免正确中文名被误判为英文残片。</summary>
+        private static bool CanSegmentReliableLatinAbbreviations(string fragment)
+        {
+            string value = (fragment ?? string.Empty).ToUpperInvariant();
+            if (value.Length < 4)
+            {
+                return false;
+            }
+            var reachable = new bool[value.Length + 1];
+            reachable[0] = true;
+            for (int offset = 0; offset < value.Length; offset++)
+            {
+                if (!reachable[offset])
+                {
+                    continue;
+                }
+                foreach (string abbreviation in ReliableLatinAbbreviations)
+                {
+                    // 单字符 A/B 只允许独立后缀，不能让任意未知字母串通过组合校验。
+                    if (abbreviation.Length < 2 || offset + abbreviation.Length > value.Length)
+                    {
+                        continue;
+                    }
+                    if (string.Compare(value, offset, abbreviation, 0, abbreviation.Length,
+                        StringComparison.OrdinalIgnoreCase) == 0)
+                    {
+                        reachable[offset + abbreviation.Length] = true;
+                    }
+                }
+            }
+            return reachable[value.Length];
         }
 
         /// <summary>XMZADD 20260831 修复旧快照中的弱推测名称和占位枚举，使升级后无需重新读取数据库即可看到新规则结果。</summary>
@@ -300,7 +374,123 @@ namespace SHB.EosDataDictionary.Services
                 { "AC_ENTITY", "业务实体" },
                 { "AC_ENTITY_NAME", "业务实体名称" },
                 { "AC_RECORDNO", "流水记录编号" },
-                { "TAXRATE", "税率" }
+                { "TAXRATE", "税率" },
+                { "IP", "IP地址" },
+                { "MAC", "MAC地址" },
+                { "SQL", "SQL语句" },
+                { "CREATER", "创建人" },
+                { "ISDELETE", "是否删除" },
+                { "ISDELETED", "是否删除" },
+                { "ACTIVED", "是否有效" },
+                { "FREEZED", "是否冻结" },
+                { "FROZEN", "是否冻结" },
+                { "CONTEXTID", "上下文ID" },
+                { "EMPTY", "是否为空" },
+                { "OBSOLETE", "是否作废" },
+                { "TITLE", "标题" },
+                { "INITIATOR", "发起人" },
+                { "ABSTRACT", "摘要" },
+                { "SNCODE", "序列号" },
+                { "DELTA", "差值" },
+                { "SURE", "是否确认" },
+                { "COPYED", "是否已复制" },
+                { "MARKED", "是否标记" },
+                { "DIRTY", "脏数据标记" },
+                { "DIRTY_WHEN", "脏数据标记时间" },
+                { "FONTITALIC", "字体斜体" },
+                { "FONTBOLD", "字体加粗" },
+                { "SENDER", "发送人" },
+                { "SENDERIP", "发送方IP地址" },
+                { "RECEIVER", "接收人" },
+                { "RECEIVERIP", "接收方IP地址" },
+                { "PRIORITY", "优先级" },
+                { "OP_DES", "操作描述" },
+                { "BUYER", "采购员" },
+                { "AUTHOR", "作者" },
+                { "OWNER", "所有者" },
+                { "DOER", "执行人" },
+                { "STARTED", "是否开始" },
+                { "CLOSED", "是否关闭" },
+                { "CONFIRMED", "是否确认" },
+                { "ACCOUNTANT", "会计" },
+                { "HIDE", "是否隐藏" },
+                { "BARCODE", "条码" },
+                { "UPDATER", "更新人" },
+                { "LENGTH", "长度" },
+                { "CAPABILITY", "能力" },
+                { "COMPRESSED", "是否压缩" },
+                { "RELEASED", "是否发布" },
+                { "ROOTCAUSE", "根本原因" },
+                { "QUIT", "是否退出" },
+                { "COUNTS", "数量" },
+                { "APPLICANT_ID", "申请人ID" },
+                { "CONTROL_METHOD", "控制方法" },
+                { "REVOKED", "是否撤回" },
+                { "NEGLECT", "是否忽略" },
+                { "SUBJECT", "主题" },
+                { "DES", "描述" },
+                { "FREIGHT", "运费" },
+                { "SEMPORARILY", "是否临时" },
+                { "LOCATION_X", "X坐标" },
+                { "LOCATION_Y", "Y坐标" },
+                { "READER", "阅读人" },
+                { "LENGTHBYTES", "字节长度" },
+                { "DEVICEID", "设备ID" },
+                { "READSCOPE", "阅读范围" },
+                { "INCLUDED", "是否包含" },
+                { "RESPONSIBILITY", "责任" },
+                { "OPEN_CLOSE", "开关状态" },
+                { "ACTIONS", "措施" },
+                { "ADJUSTDIFF", "调整差额" },
+                { "SCORE", "评分" },
+                { "MONTHLYDEMAND", "月需求量" },
+                { "NET_WEIGHT", "净重" },
+                { "GROSS_WEIGHT", "毛重" },
+                { "VIRTUAL", "是否虚拟" },
+                { "CANWRITE", "是否可写" },
+                { "CANREAD", "是否可读" },
+                { "FORALL", "是否面向所有人" },
+                { "USED", "是否使用" },
+                { "EXECUTESUCCESS", "执行成功" },
+                { "VALID", "是否有效" },
+                { "ACCESS", "访问权限" },
+                { "VISITOR", "访问者" },
+                { "NOISEDETECTION", "噪声检测" },
+                { "ASSEMBLE_CYCLE", "装配周期" },
+                { "ASSIST_CYCLE", "辅助周期" },
+                { "VISIBLE", "是否可见" },
+                { "ISSUER", "签发人" },
+                { "CANDIDATE_ID", "候选人ID" },
+                { "REQUIRE_RESPOND", "是否要求回复" },
+                { "TESTMOLD_CYCLE", "试模周期" },
+                { "CONTAINER_ID", "容器ID" },
+                { "PROJECTNATUE", "项目性质" },
+                { "SPECIALREMARKS", "特别备注" },
+                { "PRINT_LABEL", "打印标签" },
+                { "DESIGN_CYCLE", "设计周期" },
+                { "CAUSE_ID", "原因ID" },
+                { "FAULT_DES", "故障描述" },
+                { "SNAPSHOT_JSON", "快照JSON" },
+                { "COUNTRYID", "国家ID" },
+                { "STATU", "状态" },
+                { "FUSEORGID", "使用组织ID" },
+                { "BATCH_ID", "批次ID" },
+                { "DEFECT_ID", "缺陷ID" },
+                { "OAREQUSTID", "OA申请ID" },
+                { "OA_REQUESTID", "OA申请ID" },
+                { "OAREQUESTID", "OA申请ID" },
+                { "HANDLER_ID", "处理人ID" },
+                { "JOB_ID", "岗位ID" },
+                { "MOULD_ID", "模具ID" },
+                { "FINISHED", "是否完成" },
+                { "CHECKED", "是否已检查" },
+                { "ACCEPTED", "是否已接受" },
+                { "MODEL", "型号" },
+                { "PC", "计算机名" },
+                { "RID", "关联记录ID" },
+                { "NEXTMONTHFORECAST", "下月预测" },
+                { "SERVICELIFE", "使用寿命" },
+                { "TEMPORARYMEASURE", "临时措施" }
             };
         }
 
@@ -390,8 +580,240 @@ namespace SHB.EosDataDictionary.Services
                 { "SHB", "胜华波" }, { "REAL", "实际" }, { "SHOW", "显示" },
                 { "SITE", "地点" }, { "STATE", "状态" }, { "VER", "版本" },
                 { "WITH", "含" }, { "INFO", "信息" }, { "PUR", "采购" },
-                { "TABLE", "表" }, { "VIEW", "视图" }
+                { "TABLE", "表" }, { "VIEW", "视图" },
+                { "APPROVAL", "审批" }, { "MODE", "模式" }, { "AVAILABLE", "可用" },
+                { "CAPACITY", "产能" }, { "BEGIN", "起" }, { "POINT", "点" },
+                { "CORRECTIVE", "纠正" }, { "MEASURES", "措施" },
+                { "DEADLINE", "截止时间" }, { "DELETER", "删除人" },
+                { "DEMAND", "需求" }, { "FORECAST", "预测" },
+                { "DESTINATION", "目的地" }, { "DIRECT", "直接" },
+                { "DISCOUNT", "折扣" }, { "DRAWING", "图纸" },
+                { "REQUIREMENT", "要求" }, { "EXECUTOR", "执行人" },
+                { "NAMES", "姓名" }, { "LOGISTICS", "物流" }, { "CYCLE", "周期" },
+                { "MAINTENANCE", "维护" }, { "NEXT", "下" }, { "LIFE", "寿命" },
+                { "TEMPORARY", "临时" }, { "THEORETICAL", "理论" },
+                { "UPLOAD", "上传" }, { "PC", "计算机" }, { "IP", "IP地址" },
+                { "MAC", "MAC地址" }, { "WIDTH", "宽度" },
+                { "ACCOUNTING", "会计核算" }, { "EXPLAIN", "说明" },
+                { "EXECUTORS", "执行人" }, { "INITIATOR", "发起人" },
+                { "ENDOWMENT", "养老保险" },
+                { "CASE", "场景" }, { "REQUEST", "申请" }, { "TITLE", "标题" },
+                { "FARE", "费用" }, { "PHOTO", "照片" },
+                { "ROOT", "根目录" }, { "ABOUT", "相关" }, { "APPLY", "申请" },
+                { "DEFECT", "缺陷" }, { "MARK", "标记" }, { "MOULD", "模具" },
+                { "PROJECT", "项目" }, { "BANK", "银行" }, { "HANDLER", "处理人" },
+                { "LEFT", "剩余" }, { "MOLD", "模具" }, { "COPY", "复制" },
+                { "DEPUTY", "副" }, { "FIELD", "字段" }, { "JOBLESS", "失业保险" },
+                { "LAYER", "层" }, { "MAIN", "主" }, { "MEDICAL", "医疗保险" },
+                { "MODULE", "模块" }, { "PHRASE", "短语" }, { "PRESSED", "是否按下" },
+                { "RAISE", "上浮" }, { "RECEIVE", "接收" }, { "REQUST", "申请" },
+                { "SCOPE", "范围" }, { "STANDARD", "标准" }, { "STEP", "步骤" },
+                { "ATTRIB", "属性" }, { "BASIC", "基本" }, { "BEFORE", "之前" },
+                { "BUDGET", "预算" }, { "CARD", "证件" }, { "CAVITY", "型腔" },
+                { "CLOSED", "是否已关闭" }, { "COMPRESS", "压缩" },
+                { "CONCLUSION", "结论" }, { "CONFIRMED", "是否已确认" },
+                { "CONTACT", "联系" }, { "EXAMINE", "审核" }, { "FIFO", "先进先出" },
+                { "FINANCIAL", "财务" }, { "HANDLE", "处理" }, { "HOST", "主机" },
+                { "KEYWORD", "关键词" }, { "LABEL", "标签" }, { "METHOD", "方法" },
+                { "NOTICEE", "被通知人" }, { "PASSWORD", "密码" }, { "PAYED", "已付款" },
+                { "PERSON", "人员" }, { "POSITION", "职位" }, { "PURCHASER", "采购员" },
+                { "RATIO", "比例" }, { "REBATE", "返利" }, { "ROLE", "角色" },
+                { "SERVICE", "服务" }, { "SETTLED", "是否已结算" },
+                { "TELEPHONE", "电话" }, { "TIMES", "次数" }, { "WEIGHT", "重量" },
+                { "WHY", "原因" }, { "ABROAD", "国外" }, { "ACCEPTANCE", "验收" },
+                { "AGE", "年龄" }, { "ALLOW", "允许" }, { "ALTERNATE", "备用" },
+                { "AREA", "区域" }, { "ARRIVE", "到达" }, { "ASSEMBLY", "装配" },
+                { "AUDITORS", "审核人" }, { "BEEN", "已" }, { "CAN", "可以" },
+                { "CHIEF", "主管" }, { "COLD", "冷" }, { "COLS", "列" },
+                { "COMMON", "公共" }, { "CONTROL", "控制" }, { "COVER", "覆盖" },
+                { "CRITICAL", "关键" }, { "DEAL", "处理" }, { "DEBASE", "下调" },
+                { "DEFAULT", "默认" }, { "DENYED", "是否已拒绝" }, { "DIFF", "差异" },
+                { "DISPOSITION", "处置" }, { "DOCUMENT", "文档" }, { "DOWN", "下" },
+                { "DRIVER", "驾驶员" }, { "DURATION", "持续时间" },
+                { "ENCLOSURE", "附件" }, { "EQUIPMENT", "设备" },
+                { "EXAMINER", "审核人" }, { "EXCHANGE", "兑换" }, { "EXSIT", "是否存在" },
+                { "FORM", "表单" }, { "FUN", "功能" }, { "FUND", "基金" },
+                { "GOOD", "良品" }, { "GRID", "网格" }, { "GUARD", "防护" },
+                { "HEIGHT", "高度" }, { "HOT", "热" }, { "HOUSE", "住房" },
+                { "HOW", "如何" }, { "INCLUDE", "包含" }, { "INJURY", "工伤保险" },
+                { "INSPECTION", "检验" }, { "INTERNAL", "内部" },
+                { "INVOICED", "是否已开票" }, { "LEADER", "负责人" },
+                { "LINK", "关联" }, { "MACHINE", "设备" }, { "MATERNITY", "生育保险" },
+                { "MEMBER", "成员" }, { "MENU", "菜单" },
+                { "MILLISECONDS", "毫秒" }, { "NORMAL", "正常" },
+                { "NOTICEES", "被通知人" }, { "ONLY", "仅" }, { "OPERATE", "操作" },
+                { "OPERATION", "操作" }, { "PACK", "包装" }, { "PARA", "参数" },
+                { "PERCENTAGE", "百分比" }, { "PERIOD", "期间" }, { "PORT", "端口" },
+                { "PREFERRED", "首选" }, { "PRIME", "主" }, { "PRODUCTS", "产品" },
+                { "PROGRAMS", "项目" }, { "PUBLIC", "公开" }, { "QUALITIER", "质检员" },
+                { "RANGE", "范围" }, { "RECORD", "记录" }, { "RECORDED", "已记录" },
+                { "REF", "参考" }, { "RELATED", "相关" }, { "RELEASED", "是否已发布" },
+                { "REQUIRE", "要求" }, { "REVIEWER", "评审人" }, { "REWORK", "返工" },
+                { "RISK", "风险" }, { "SCRAP", "报废" }, { "SOURCES", "来源" },
+                { "SPARE", "备用" }, { "SPECIAL", "特殊" }, { "STATIC", "固定" },
+                { "STORE", "存储" }, { "SUBMIT", "提交" }, { "SUDDEN", "突发" },
+                { "TAKE", "领取" }, { "TEAM", "团队" }, { "TELE", "电话" },
+                { "TELLER", "出纳" }, { "TEMP", "临时" }, { "TOPIC", "主题" },
+                { "TRIGGER", "触发器" }, { "UPH", "每小时产量" }, { "USAGE", "用途" },
+                { "WHERE", "地点" }, { "WRITE", "写入" }, { "ABNORMAL", "异常" },
+                { "ACCEPT", "接受" }, { "ACCEPTOR", "接受人" },
+                { "ACCOUNTED", "是否已记账" }, { "ACTION", "行动" },
+                { "ADDITION", "增加" }, { "ADDR", "地址" }, { "ADJUST", "调整" },
+                { "AFFIRMED", "是否已确认" }, { "AHEAD", "提前" }, { "AIM", "目标" },
+                { "AIR", "航空" }, { "ALARM", "报警" }, { "ALIAS", "别名" },
+                { "ANSWERED", "是否已答复" }, { "APPLICANT", "申请人" },
+                { "APPLICANTS", "申请人" }, { "APPLIER", "申请人" },
+                { "APPOINTED", "指定" }, { "APPORTION", "分摊" },
+                { "APPRAISERS", "评审人" }, { "APPROVE", "审批" },
+                { "APPROVER", "审批人" }, { "ARCHIVE", "归档" },
+                { "ARRIVED", "是否已到达" }, { "ASSETS", "资产" },
+                { "AUTOMATIC", "自动" }, { "BELONG", "归属" }, { "BID", "报价" },
+                { "BIG", "大" }, { "BIND", "绑定" }, { "BIZ", "业务" },
+                { "BLOB", "二进制" }, { "BYTES", "字节" }, { "CAR", "车辆" },
+                { "CAUSE", "原因" }, { "CBM", "立方米" }, { "CELLPHONE", "手机" },
+                { "CHARACTER", "字符" }, { "CHECKING", "检查" }, { "CITY", "城市" },
+                { "CLAIM", "索赔" }, { "CLASSIFICATION", "分类" },
+                { "CLICKS", "点击次数" }, { "CLOCK", "时钟" }, { "CLOSE", "关闭" },
+                { "COMMENT", "评论" }, { "COMPLETED", "是否已完成" },
+                { "CONSENT", "同意" }, { "COORDINATOR", "协调人" },
+                { "COSTS", "成本" }, { "COUNTERMEASURE", "对策" },
+                { "COUNTRY", "国家" }, { "CURRENT", "当前" }, { "CUSTOMERS", "客户" },
+                { "CUT", "切割" }, { "DAILY", "每日" }, { "DATETIME", "日期时间" },
+                { "DEBT", "欠款" }, { "DEBTOR", "欠款方" }, { "DECLARATION", "申报" },
+                { "DECOMPRESSED", "是否已解压" }, { "DECREASE", "减少" },
+                { "DEFINE", "定义" }, { "DELAY", "延期" },
+                { "DELIVERYED", "是否已交付" }, { "DEPATRMENT", "部门" },
+                { "DESIGN", "设计" }, { "DESIGNER", "设计人" },
+                { "DESTRUCTIVE", "破坏性" }, { "DETECTION", "检测" },
+                { "DIFFERENCE", "差异" }, { "DIRECTION", "方向" },
+                { "DIRECTOR", "负责人" }, { "DOCUMENTS", "文档" },
+                { "DOMESTIC", "国内" }, { "DOWNLOAD", "下载" }, { "DUTY", "职责" },
+                { "EARLY", "较早" }, { "EDITING", "编辑" }, { "EDUCATION", "学历" },
+                { "ELAPSED", "已用时间" }, { "ELECTRICAL", "电气" },
+                { "ELEMENT", "元素" }, { "EMPLOYEE", "员工" }, { "EMPLOYEES", "员工" },
+                { "ENGLISH", "英文" }, { "ENTERTAINMENT", "招待" },
+                { "EVALUATION", "评估" }, { "EVIDENCE", "证据" },
+                { "EXECUTE", "执行" }, { "EXECUTER", "执行人" },
+                { "EXECUTING", "执行中" }, { "EXPANDED", "是否已展开" },
+                { "EXPECTED", "预计" }, { "EXPLANATION", "说明" },
+                { "EXTERNAL", "外部" }, { "EXTRA", "额外" }, { "FACTORS", "因素" },
+                { "FAILOVER", "故障转移" }, { "FALSE", "误" }, { "FAULT", "故障" },
+                { "FEEDBACK", "反馈" }, { "FIELDNAME", "字段名称" },
+                { "FILED", "字段" }, { "FILEDS", "字段" }, { "FILTER", "筛选" },
+                { "FINAL", "最终" }, { "FINGERPRINT", "指纹" }, { "FITTER", "钳工" },
+                { "FIXTURE", "工装夹具" }, { "FLOOR", "楼层" },
+                { "FLOWCHART", "流程图" }, { "FOREIGN", "外籍" },
+                { "FORMAL", "正式" }, { "FOUND", "发现" }, { "FREE", "自由" },
+                { "FRONT", "正面" }, { "GEARBOX", "齿轮箱" }, { "GREEN", "绿色" },
+                { "HAPPENED", "发生" }, { "HASH", "哈希" }, { "HELPER", "协助人" },
+                { "HIDE", "是否隐藏" }, { "HITS", "命中次数" }, { "HOLES", "孔数" },
+                { "HOTEL", "酒店" }, { "IDENTITY", "身份" }, { "IMPORT", "导入" },
+                { "INBOUND", "入库" }, { "INFLUENCING", "影响" },
+                { "INITIAL", "初始" }, { "INITOR", "发起人" }, { "INSIDE", "内部" },
+                { "INSPECTOR", "检验员" }, { "INSTRUCTION", "指令" },
+                { "INTRODUCER", "介绍人" }, { "INVALID", "无效" }, { "JOIN", "加入" },
+                { "KNOW", "知晓" }, { "LACKS", "缺失" }, { "LANDSCAPE", "横向" },
+                { "LATER", "较晚" }, { "LAY", "布局" }, { "LENGTH", "长度" },
+                { "LESSON", "经验教训" }, { "LIMITED", "受限" },
+                { "LOCATION", "位置" }, { "LOCK", "锁" }, { "LOGO", "标志" },
+                { "LOWEST", "最低" }, { "MAINTAIN", "保养" }, { "MANAGE", "管理" },
+                { "MANY", "数量" }, { "MEASURE", "措施" },
+                { "MEASUREMENT", "测量" }, { "MECHANISM", "机构" },
+                { "MEMBERS", "成员" }, { "METER", "米" }, { "MILEAGE", "里程" },
+                { "MILESTONES", "里程碑" }, { "MIN", "最小" }, { "MINOR", "次要" },
+                { "MISS", "缺失" }, { "MODIFY", "修改" }, { "MOMENT", "时刻" },
+                { "MONTHLY", "月度" }, { "NEEDED", "是否需要" },
+                { "NOISE", "噪声" }, { "NOTES", "备注" }, { "NOW", "当前" },
+                { "NUM", "数量" }, { "OPENING", "开户" }, { "OPTIONAL", "是否可选" },
+                { "OTHERS", "其他" }, { "OUTFLOW", "流出" }, { "OWNER", "货主" },
+                { "PACKING", "包装" }, { "PALLETS", "托盘" }, { "PARAGRAPH", "段落" },
+                { "PARTICIPANT", "参与者" }, { "PARTS", "零件" }, { "PASS", "通过" },
+                { "PATTERN", "模式" }, { "PAYEE", "收款人" }, { "PAYER", "付款人" },
+                { "PERCENT", "百分比" }, { "PERMANENT", "永久" },
+                { "PERMISSION", "权限" }, { "PERSION", "人员" },
+                { "PERSONAL", "个人" }, { "PERSONNEL", "人员" },
+                { "PLANNED", "计划" }, { "POLLUTION", "污染" }, { "POOLING", "拼车" },
+                { "POSITIVE", "正向" }, { "POST", "发布" }, { "POWER", "权限" },
+                { "PRACTICAL", "实际" }, { "PRECAST", "预排" }, { "PRETEND", "模拟" },
+                { "PREVENTION", "预防" }, { "PRINTED", "是否已打印" },
+                { "PROCUREMENT", "采购" }, { "PRODUCTIVE", "生产" },
+                { "PROPERTY", "属性" }, { "PROPORTION", "比例" },
+                { "PROTOCOL", "协议" }, { "PURPOSE", "用途" }, { "READ", "读取" },
+                { "READED", "是否已读" }, { "READONLY", "只读" }, { "READY", "就绪" },
+                { "REALEASE", "发布" }, { "RECEIPT", "回执" },
+                { "RECEIVED", "是否已接收" }, { "RECEIVER", "接收人" },
+                { "RECEIVERS", "接收人" }, { "RECIEVE", "接收" },
+                { "RECIEVED", "是否已接收" }, { "RECONCILIATION", "对账" },
+                { "RECURRENCE", "再次发生" }, { "RECYCLED", "回收" },
+                { "RED", "红色" }, { "REFRESH", "刷新" }, { "REHAB", "返修" },
+                { "RELATION", "关系" }, { "REMAINING", "剩余" },
+                { "REOCCUR", "再次发生" }, { "REPAIRED", "是否已维修" },
+                { "REQ", "要求" }, { "RESPONDED", "是否已响应" },
+                { "RESPONSIBLE", "负责人" }, { "RETURN", "退回" },
+                { "REWORKED", "是否已返工" }, { "RMB", "人民币" }, { "ROOM", "房间" },
+                { "SAFE", "安全" }, { "SALARY", "工资" }, { "SALER", "销售员" },
+                { "SATISFACTION", "满意度" }, { "SAVER", "保存人" },
+                { "SCANNING", "扫描" }, { "SCHEDULE", "计划" }, { "SCHEME", "方案" },
+                { "SEARCHER", "查询人" }, { "SECONDS", "秒" }, { "SEND", "发送" },
+                { "SENT", "是否已发送" }, { "SERVERITY", "严重度" },
+                { "SETTLEMENT", "结算" }, { "SETUP", "设置" }, { "SHARE", "共享" },
+                { "SHARED", "是否已共享" }, { "SHIPMENT", "发货" },
+                { "SHOP", "车间" }, { "SHORT", "短" }, { "SIGNATURE", "签名" },
+                { "SIGNITURE", "签名" }, { "SINGLE", "单个" }, { "SKIP", "跳过" },
+                { "SMALL", "小" }, { "SNAPSHOT", "快照" }, { "SOFTWARE", "软件" },
+                { "SOLVED", "是否已解决" }, { "SPECIFICATION", "规格" },
+                { "STAGE", "阶段" }, { "STAGING", "暂存" }, { "STATISTICS", "统计" },
+                { "STATS", "状态" }, { "STATUE", "状态" },
+                { "SUBCOMPANY", "子公司" }, { "SUBCOMPANYID", "子公司ID" },
+                { "SUBSIDY", "补贴" }, { "SUCCESS", "成功" }, { "SUM", "合计" },
+                { "SUPPLIERS", "供应商" }, { "SUPPLY", "供应" },
+                { "SWICH", "开关" }, { "SWITCH", "开关" }, { "SYMBOL", "符号" },
+                { "TARE", "皮重" }, { "TEL", "电话" }, { "TEST", "测试" },
+                { "THREAD", "线程" }, { "THREE", "三" }, { "TONNAGE", "吨位" },
+                { "TRAFFIC", "交通" }, { "TRAIN", "火车" }, { "TRAINING", "培训" },
+                { "TRANSFER", "转移" }, { "TRANSMISSION", "传动" },
+                { "TREAT", "处理" }, { "TRIPARTITE", "三方" }, { "TWO", "二" },
+                { "URGENT", "紧急" }, { "VENDOR", "供应商" }, { "VERIFY", "核验" },
+                { "VIEWER", "查看人" }, { "VOLUME", "体积" }, { "WEB", "网页" },
+                { "WHAT", "内容" }, { "WHEN", "时间" }, { "WHITE", "白色" },
+                { "WINDOWS", "Windows系统" }, { "WITHDRAW", "撤回" },
+                { "WORKER", "工人" }, { "WORKING", "工作中" },
+                { "WRITTEN", "书面" }, { "YELLOW", "黄色" }
             };
+        }
+
+        /// <summary>XMZADD 20260917 判断词段是否像无法独立翻译的实体缩写，完整英文单词不得被静默丢弃。</summary>
+        private static bool IsOmittableUnknownPrefix(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token) || token.Length > 6 ||
+                TokenTranslations.ContainsKey(token))
+            {
+                return false;
+            }
+            for (int index = 0; index < token.Length; index++)
+            {
+                char character = token[index];
+                if (!char.IsUpper(character) && !char.IsDigit(character))
+                {
+                    return token.Length <= 3;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>XMZADD 20260917 将分词后的后缀重新拼成可由统一翻译器处理的标识符。</summary>
+        private static string JoinIdentifierTokens(IList<string> tokens, int startIndex)
+        {
+            var result = new StringBuilder();
+            for (int index = startIndex; index < tokens.Count; index++)
+            {
+                if (result.Length > 0)
+                {
+                    result.Append("_");
+                }
+                result.Append(tokens[index]);
+            }
+            return result.ToString();
         }
 
         /// <summary>XMZADD 20260831 按下划线、空格和驼峰边界拆分数据库标识符。</summary>

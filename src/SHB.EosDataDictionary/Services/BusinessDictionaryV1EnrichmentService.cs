@@ -22,10 +22,16 @@ namespace SHB.EosDataDictionary.Services
             // 业务代码中的动态表用途比知识库简称更精确，用于纠正逐词翻译和宽泛名称。
             new BusinessCodeNameInferenceService().Apply(snapshot, sourceEvidence);
             BusinessSemanticRuleService.Apply(snapshot);
+            // 已核验缩写表名为后续主键和关联字段提供纯中文业务对象名称，且仍只进入待审阅参考层。
+            new VerifiedBusinessTableNameInferenceService().Apply(snapshot);
             new CodeRelationEvidenceService().Apply(snapshot, sourceEvidence);
             // 离线快照必须固化命名关系，确保共享字典无需打开详情页也拥有完整关联证据。
             LogicalRelationDiscoveryService.Discover(snapshot);
             new BusinessTableClassificationService().Classify(snapshot, sourceEvidence, knowledgeCatalog);
+            // 主键和已核验父子关系可把可靠业务对象名称传递给 ID 字段，但逻辑命名关系只能作为参考译名。
+            new StructuralFieldNameInferenceService().Apply(snapshot, sourceEvidence);
+            // 多义缩写只有落在源码已核验的表族中才补全，避免同名字段被全局误译。
+            new VerifiedBusinessFieldNameInferenceService().Apply(snapshot);
             // 所有后置业务规则也必须经过同一准入门槛，避免弱代码候选重新占用正式名称列。
             new BusinessNameLayerService().NormalizeSnapshot(snapshot);
         }

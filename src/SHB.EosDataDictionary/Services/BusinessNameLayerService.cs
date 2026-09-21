@@ -80,7 +80,14 @@ namespace SHB.EosDataDictionary.Services
                 {
                     continue;
                 }
-                ApplyTableCandidates(table, new List<MetadataValue>());
+                var tableCandidates = new List<MetadataValue>();
+                MetadataValue translatedTableName = CreateIdentifierTranslationCandidate(
+                    table.ObjectName, true, table.ChineseName, table.SuggestedChineseName);
+                if (translatedTableName != null)
+                {
+                    tableCandidates.Add(translatedTableName);
+                }
+                ApplyTableCandidates(table, tableCandidates);
                 if (table.Fields == null)
                 {
                     continue;
@@ -89,10 +96,95 @@ namespace SHB.EosDataDictionary.Services
                 {
                     if (table.Fields[fieldIndex] != null)
                     {
-                        ApplyFieldCandidates(table.Fields[fieldIndex], new List<MetadataValue>());
+                        FieldMetadata field = table.Fields[fieldIndex];
+                        var fieldCandidates = new List<MetadataValue>();
+                        MetadataValue translatedFieldName = CreateIdentifierTranslationCandidate(
+                            field.FieldName, false, field.ChineseName, field.SuggestedChineseName);
+                        if (translatedFieldName != null)
+                        {
+                            fieldCandidates.Add(translatedFieldName);
+                        }
+                        ApplyFieldCandidates(field, fieldCandidates);
                     }
                 }
             }
+        }
+
+        /// <summary>XMZADD 20260917 在正式名和首选参考名均不可靠时生成完整标识符译名，并保留原始物理名作为依据。</summary>
+        private static MetadataValue CreateIdentifierTranslationCandidate(string identifier, bool isTable,
+            MetadataValue officialName, MetadataValue suggestedName)
+        {
+            if (IdentifierTranslationService.IsReliableChineseName(GetValue(officialName)) ||
+                IdentifierTranslationService.IsReliableChineseName(GetValue(suggestedName)))
+            {
+                return null;
+            }
+            bool fullyTranslated = isTable
+                ? IdentifierTranslationService.IsTableNameFullyTranslated(identifier)
+                : IdentifierTranslationService.IsFieldNameFullyTranslated(identifier);
+            string translated;
+            int confidenceScore;
+            string sourceSummary;
+            string ruleName;
+            string explanation;
+            if (fullyTranslated)
+            {
+                translated = isTable
+                    ? IdentifierTranslationService.TranslateTableName(identifier)
+                    : IdentifierTranslationService.TranslateFieldName(identifier);
+                confidenceScore = 72;
+                sourceSummary = isTable ? "英文表名完整拆分翻译" : "英文字段名完整拆分翻译";
+                ruleName = "IdentifierTranslation";
+                explanation = isTable
+                    ? "物理表名全部词根均有稳定中文含义"
+                    : "物理字段名全部词根均有稳定中文含义";
+            }
+            else if (!isTable)
+            {
+                string omittedPrefix;
+                if (!IdentifierTranslationService.TryTranslateFieldNameWithoutUnknownPrefix(
+                        identifier, out translated, out omittedPrefix))
+                {
+                    return null;
+                }
+                confidenceScore = 68;
+                sourceSummary = "省略未知实体缩写后的业务后缀翻译";
+                ruleName = "IdentifierSuffixTranslation";
+                explanation = "前缀 " + omittedPrefix + " 暂无可靠释义，仅展示可完整翻译的业务后缀";
+            }
+            else
+            {
+                return null;
+            }
+            if (!IdentifierTranslationService.IsReliableChineseName(translated))
+            {
+                return null;
+            }
+            return new MetadataValue
+            {
+                Value = translated,
+                Status = ConfidenceStatus.Guessed,
+                ConfidenceScore = confidenceScore,
+                SourceType = "名称翻译",
+                SourceSummary = sourceSummary,
+                Evidence = new List<EvidenceItem>
+                {
+                    new EvidenceItem
+                    {
+                        SourceType = "名称翻译",
+                        RuleName = ruleName,
+                        RawValue = identifier,
+                        OriginalText = identifier,
+                        Explanation = explanation
+                    }
+                }
+            };
+        }
+
+        /// <summary>XMZADD 20260917 安全读取名称元数据文本，供可靠性判断复用。</summary>
+        private static string GetValue(MetadataValue value)
+        {
+            return value == null ? string.Empty : value.Value ?? string.Empty;
         }
 
         /// <summary>XMZADD 20260915 判断候选是否达到新人可直接依赖的正式中文名称标准。</summary>
@@ -430,6 +522,13 @@ namespace SHB.EosDataDictionary.Services
             if (left.CanPromote != right.CanPromote)
             {
                 return left.CanPromote ? -1 : 1;
+            }
+            bool leftReliable = IdentifierTranslationService.IsReliableChineseName(left.Value);
+            bool rightReliable = IdentifierTranslationService.IsReliableChineseName(right.Value);
+            if (leftReliable != rightReliable)
+            {
+                // 新人首先看到的参考译名必须是完整中文；伪中文数据库原文仍保留在其他候选中供审阅。
+                return leftReliable ? -1 : 1;
             }
             int score = right.MergedValue.ConfidenceScore.CompareTo(left.MergedValue.ConfidenceScore);
             if (score != 0)

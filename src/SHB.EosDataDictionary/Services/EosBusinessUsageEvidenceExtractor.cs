@@ -2336,6 +2336,7 @@ namespace SHB.EosDataDictionary.Services
             var result = new StringBuilder();
             var outsideExpression = new StringBuilder();
             bool insideString = false;
+            bool includeCurrentLiteral = true;
             string value = sourceLine ?? string.Empty;
             for (int characterIndex = 0; characterIndex < value.Length; characterIndex++)
             {
@@ -2344,14 +2345,22 @@ namespace SHB.EosDataDictionary.Services
                 {
                     if (character == '"')
                     {
+                        string expression = outsideExpression.ToString();
                         if (foundStringLiteral && HasDynamicConcatenationExpression(outsideExpression.ToString()))
                         {
                             AppendUnknownSqlObjectPlaceholder(result);
                         }
-                        outsideExpression.Length = 0;
+                        // 辅助方法参数中的字符串是程序参数而非 SQL 片段，保留会把别名文本误识别成子查询字段。
+                        includeCurrentLiteral = !foundStringLiteral ||
+                                                !HasUnclosedParenthesis(expression);
+                        if (includeCurrentLiteral)
+                        {
+                            outsideExpression.Length = 0;
+                        }
                         insideString = true;
                         foundStringLiteral = true;
-                        if (result.Length > 0 && !char.IsWhiteSpace(result[result.Length - 1]))
+                        if (includeCurrentLiteral && result.Length > 0 &&
+                            !char.IsWhiteSpace(result[result.Length - 1]))
                         {
                             result.Append(' ');
                         }
@@ -2369,19 +2378,28 @@ namespace SHB.EosDataDictionary.Services
 
                 if (character != '"')
                 {
-                    result.Append(character);
+                    if (includeCurrentLiteral)
+                    {
+                        result.Append(character);
+                    }
                     continue;
                 }
 
                 if (characterIndex + 1 < value.Length && value[characterIndex + 1] == '"')
                 {
-                    result.Append('"');
+                    if (includeCurrentLiteral)
+                    {
+                        result.Append('"');
+                    }
                     characterIndex++;
                     continue;
                 }
 
                 insideString = false;
-                outsideExpression.Length = 0;
+                if (includeCurrentLiteral)
+                {
+                    outsideExpression.Length = 0;
+                }
             }
             if (foundStringLiteral && !insideString &&
                 HasDynamicConcatenationExpression(outsideExpression.ToString()))
@@ -2389,6 +2407,25 @@ namespace SHB.EosDataDictionary.Services
                 AppendUnknownSqlObjectPlaceholder(result);
             }
             return foundStringLiteral ? result.ToString() : value;
+        }
+
+        /// <summary>XMZADD 20260918 判断当前字符串是否位于尚未闭合的辅助方法参数中，避免参数文字进入 SQL 字段扫描。</summary>
+        private static bool HasUnclosedParenthesis(string expression)
+        {
+            int depth = 0;
+            string value = expression ?? string.Empty;
+            for (int index = 0; index < value.Length; index++)
+            {
+                if (value[index] == '(')
+                {
+                    depth++;
+                }
+                else if (value[index] == ')' && depth > 0)
+                {
+                    depth--;
+                }
+            }
+            return depth > 0;
         }
 
         /// <summary>XMZADD 20260905 判断相邻字符串之间是否包含不能静态还原的变量或属性表达式。</summary>

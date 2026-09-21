@@ -395,6 +395,45 @@ namespace SHB.EosDataDictionary.Tests
             Assert.IsNull(table.SuggestedChineseName.OriginalAutomaticValue);
         }
 
+        /// <summary>XMZADD 20260917 验证不可靠数据库说明保留为备选证据且不会压住完整标识符译名。</summary>
+        [TestMethod]
+        public void NormalizeSnapshot_PseudoDatabaseName_PrefersReliableIdentifierTranslation()
+        {
+            FieldMetadata field = CreateField("IsDelete");
+            field.ChineseName = CreateCandidate(
+                "如果记录已经删除则表示一否则表示零", ConfidenceStatus.DatabaseEvidence, 100,
+                "DatabaseComment", string.Empty, 0);
+            TableMetadata table = CreateTable("T_Test");
+            table.Fields.Add(field);
+            var snapshot = new SnapshotData { Tables = new List<TableMetadata> { table } };
+
+            new BusinessNameLayerService().NormalizeSnapshot(snapshot);
+
+            Assert.AreEqual(string.Empty, field.ChineseName.Value);
+            Assert.AreEqual("是否删除", field.SuggestedChineseName.Value);
+            Assert.AreEqual(1, field.AlternativeChineseNames.Count);
+            Assert.AreEqual("如果记录已经删除则表示一否则表示零",
+                field.AlternativeChineseNames[0].Value);
+        }
+
+        /// <summary>XMZADD 20260917 验证未知实体缩写不会遮住可完整翻译的业务后缀且仍只进入参考层。</summary>
+        [TestMethod]
+        public void NormalizeSnapshot_UnknownEntityPrefix_UsesTranslatedBusinessSuffix()
+        {
+            FieldMetadata field = CreateField("ER_Accounting");
+            TableMetadata table = CreateTable("ExpenseReimbursement");
+            table.Fields.Add(field);
+
+            new BusinessNameLayerService().NormalizeSnapshot(
+                new SnapshotData { Tables = new List<TableMetadata> { table } });
+
+            Assert.AreEqual(string.Empty, field.ChineseName.Value);
+            Assert.AreEqual("会计核算", field.SuggestedChineseName.Value);
+            Assert.AreEqual(ConfidenceStatus.Guessed, field.SuggestedChineseName.Status);
+            Assert.AreEqual("IdentifierSuffixTranslation",
+                field.SuggestedChineseName.Evidence[0].RuleName);
+        }
+
         /// <summary>XMZADD 20260915 创建具有空正式名称和可写候选集合的表元数据。</summary>
         private static TableMetadata CreateTable(string objectName)
         {
